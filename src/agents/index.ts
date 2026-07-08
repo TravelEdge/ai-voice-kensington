@@ -63,6 +63,8 @@ export async function handleMessage(tac: TAC, params: {
 }): Promise<string> {
 
   const { conversationId, message, memory, session } = params;
+
+  console.log(JSON.stringify(params, null, 4));
   const convId = String(conversationId);
 
    // initilaize conversation history in local array if it doesnt already exist
@@ -79,7 +81,7 @@ export async function handleMessage(tac: TAC, params: {
   const memorySid = process.env.TWILIO_MEMORY_STORE_ID;
 
 
-  const prompt = session.channel === 'sms' ? PROMPTS.get(PROMPT_NAME.INITIAL_SMS_OUTBOUND_ENQUIRY) : PROMPTS.get(PROMPT_NAME.OUTBOUND_FOLLOW_UP_CALL)
+  const prompt = session.channel === 'sms' ? PROMPTS.get(PROMPT_NAME.INITIAL_SMS_OUTBOUND_ENQUIRY) : PROMPTS.get(PROMPT_NAME.IN_DESTINATION)
   const systemPrompt = await preparePrompt(profileId, memorySid, memory, session, prompt)
   history.push({ role: 'user', content: message });
   
@@ -88,7 +90,7 @@ export async function handleMessage(tac: TAC, params: {
     max_tokens: 512,
     system: systemPrompt,
     messages: history,
-    tools: getAllTools(tac),
+    tools: getAllTools(tac, session),
   });
 
   console.log("Claude Response: " + JSON.stringify(response, null, 4));

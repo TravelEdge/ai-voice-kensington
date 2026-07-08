@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 import {
+  createStudioHandoffTool,
   TAC,
   type TACTool,
 } from 'twilio-agent-connect';
@@ -14,6 +15,7 @@ import {
 
 
 let tacKnowledgeTool: TACTool<any, any> | undefined;
+let tacHandoffTool: TACTool<any, any> | undefined;
 
 export { extractCustomerProfileId, getProfileTraitsForPrompt } from './memory-client.js';
 
@@ -41,17 +43,7 @@ export const TOOLS: Anthropic.Tool[] = [
       },
       required: [],
     },
-  },
-  {
-    name: 'place_outbound_call',
-    description:
-      'Place an outbound voice call to the customer using the phone number on their profile. Use when the customer requests a callback or when a voice follow-up is needed.',
-    input_schema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
+  }
 ];
 
 
@@ -95,59 +87,6 @@ export const executeTool = async (
       return 'Failed to update contact information. Please try again.';
     }
 
-    case 'place_outbound_call': {
-      if (!context?.profileId || !context?.memorySid) {
-        return 'Error: Cannot place call - no customer profile found.';
-      }
-
-      const accountSid = process.env.TWILIO_ACCOUNT_SID;
-      const authToken = process.env.TWILIO_AUTH_TOKEN;
-      const fromNumber = process.env.TWILIO_PHONE_NUMBER;
-      const publicDomain = process.env.TWILIO_VOICE_PUBLIC_DOMAIN;
-
-      if (!accountSid || !authToken || !fromNumber || !publicDomain) {
-        return 'Error: Missing required environment variables for outbound calls (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, TWILIO_VOICE_PUBLIC_DOMAIN).';
-      }
-
-      const profile = await getProfile(context.memorySid, context.profileId);
-      const toNumber = profile?.traits?.Contact?.phone as string | undefined;
-
-      if (!toNumber) {
-        return 'Error: No phone number found on customer profile. Cannot place call.';
-      }
-
-      const twimlUrl = `https://${publicDomain}/twiml`;
-      const callsUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls.json`;
-      const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-
-      const body = new URLSearchParams({
-        Url: twimlUrl,
-        To: toNumber,
-        From: fromNumber,
-      });
-
-      console.log(`[OUTBOUND_CALL] Calling ${toNumber} from ${fromNumber} via ${twimlUrl}`);
-
-      const response = await fetch(callsUrl, {
-        method: 'POST',
-        headers: {
-          Authorization: `Basic ${auth}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: body.toString(),
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        console.error(`[OUTBOUND_CALL] Failed: ${response.status} ${errorBody}`);
-        return `Failed to place call: ${response.status}`;
-      }
-
-      const result = await response.json() as { sid: string };
-      console.log(`[OUTBOUND_CALL] Initiated call SID: ${result.sid}`);
-      return `Outbound call initiated to ${toNumber}. Call SID: ${result.sid}`;
-    }
-
     default:
       if (tacKnowledgeTool && toolName === tacKnowledgeTool.name) {
         const result = await tacKnowledgeTool.implementation(toolInput as any);
@@ -174,11 +113,21 @@ export const tacToolToAnthropicTool = (tacTool: TACTool<any, any>): Anthropic.To
   };
 }
 
-export const getAllTools = (tac: TAC): Anthropic.Tool[] => {
+export const getAllTools = (tac: TAC, session: any): Anthropic.Tool[] => {
   const tools = [...TOOLS];
   tacKnowledgeTool = createKnowledgeToolFromConfig(tac)
   if (tacKnowledgeTool) {
     tools.push(tacToolToAnthropicTool(tacKnowledgeTool));
   }
+  tacHandoffTool = createStudioHandoffTool(tac, session, {
+      attributes: {
+        test: "true"
+      }
+  })
+  if(tacHandoffTool) {
+    console.log("ADDED HANDOFF TOOL");
+    tools.push(tacToolToAnthropicTool(tacHandoffTool));
+  }
+
   return tools;
 }
