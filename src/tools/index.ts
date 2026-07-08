@@ -12,6 +12,10 @@ import {
   formatTraitsForPrompt,
   updateProfileTraits,
 } from './memory-client.js';
+import {
+  TRANSFER_TO_WORKFLOW_TOOL,
+  executeTransferToWorkflow,
+} from './transfer-to-workflow.js';
 
 
 let tacKnowledgeTool: TACTool<any, any> | undefined;
@@ -43,9 +47,16 @@ export const TOOLS: Anthropic.Tool[] = [
       },
       required: [],
     },
-  }
+  },
+  TRANSFER_TO_WORKFLOW_TOOL,
 ];
 
+
+export interface ToolExecutionContext {
+  profileId?: string;
+  memorySid?: string;
+  callSid?: string;
+}
 
 /**
  * Execute a tool call and return the result
@@ -53,7 +64,7 @@ export const TOOLS: Anthropic.Tool[] = [
 export const executeTool = async (
   toolName: string,
   toolInput: Record<string, unknown>,
-  context?: { profileId?: string; memorySid?: string }
+  context?: ToolExecutionContext
 ): Promise<string>  => {
   switch (toolName) {
 
@@ -85,6 +96,10 @@ export const executeTool = async (
       }
 
       return 'Failed to update contact information. Please try again.';
+    }
+
+    case 'transfer_to_workflow': {
+      return executeTransferToWorkflow(toolInput, context?.callSid);
     }
 
     default:
@@ -119,15 +134,15 @@ export const getAllTools = (tac: TAC, session: any): Anthropic.Tool[] => {
   if (tacKnowledgeTool) {
     tools.push(tacToolToAnthropicTool(tacKnowledgeTool));
   }
-  tacHandoffTool = createStudioHandoffTool(tac, session, {
-      attributes: {
-        test: "true"
-      }
-  })
-  if(tacHandoffTool) {
-    console.log("ADDED HANDOFF TOOL");
-    tools.push(tacToolToAnthropicTool(tacHandoffTool));
-  }
+  // tacHandoffTool = createStudioHandoffTool(tac, session, {
+  //     attributes: {
+  //       test: "true"
+  //     }
+  // })
+  // if(tacHandoffTool) {
+  //   console.log("ADDED HANDOFF TOOL");
+  //   tools.push(tacToolToAnthropicTool(tacHandoffTool));
+  // }
 
   return tools;
 }

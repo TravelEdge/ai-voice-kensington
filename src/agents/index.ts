@@ -17,8 +17,34 @@ let claude: Anthropic | undefined;
 // Per-conversation message history keyed by conversationId
 const histories = new Map<string, Anthropic.MessageParam[]>();
 
+// CallSid captured on ConversationRelay setup, keyed by the caller's address.
+// The voice channel exposes callSid on setup (before the conversation is
+// initialized) and provides authorInfo.address on the first prompt, so we join
+// on the caller's address to move it onto session.metadata.callSid.
+const pendingCallSidByFrom = new Map<string, string>();
+
+export function registerPendingCallSid(from: string, callSid: string): void {
+  pendingCallSidByFrom.set(from, callSid);
+}
+
+const resolveCallSid = (session: ConversationSession): string | undefined => {
+  const existing = session.metadata?.callSid;
+  if (typeof existing === 'string' && existing.length > 0) return existing;
+
+  const from = session.authorInfo?.address;
+  if (!from) return undefined;
+
+  const callSid = pendingCallSidByFrom.get(from);
+  if (!callSid) return undefined;
+
+  if (!session.metadata) session.metadata = {};
+  session.metadata.callSid = callSid;
+  pendingCallSidByFrom.delete(from);
+  return callSid;
+};
+
 const preparePrompt = async (
-  
+
   profileId: string | undefined,
   memorySid: string | undefined,
   memory: TACMemoryResponse | undefined,
@@ -44,7 +70,7 @@ const preparePrompt = async (
 
   // Inject Twilio Conversation Memory + session context + profile traits into the system prompt
   const memoryContext = MemoryPromptBuilder.build(memory, session);
-  
+
   const systemPrompt =
     prompt +
     dateTimeContext +
@@ -79,12 +105,13 @@ export async function handleMessage(tac: TAC, params: {
   // Extract customer profile ID from TAC memory response
   const profileId = extractCustomerProfileId(memory);
   const memorySid = process.env.TWILIO_MEMORY_STORE_ID;
+  const callSid = session.channel === 'voice' ? resolveCallSid(session) : undefined;
 
 
   const prompt = session.channel === 'sms' ? PROMPTS.get(PROMPT_NAME.INITIAL_SMS_OUTBOUND_ENQUIRY) : PROMPTS.get(PROMPT_NAME.IN_DESTINATION)
   const systemPrompt = await preparePrompt(profileId, memorySid, memory, session, prompt)
   history.push({ role: 'user', content: message });
-  
+
   let response = await claude.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 512,
@@ -94,7 +121,7 @@ export async function handleMessage(tac: TAC, params: {
   });
 
   console.log("Claude Response: " + JSON.stringify(response, null, 4));
-  
+
   // Handle tool calls (agentic loop)
   while (response.stop_reason === 'tool_use') {
     const toolUseBlocks = response.content.filter(
@@ -114,7 +141,7 @@ export async function handleMessage(tac: TAC, params: {
         const result = await executeTool(
           toolUse.name,
           toolUse.input as Record<string, unknown>,
-          { profileId, memorySid }
+          { profileId, memorySid, callSid }
         );
         console.log(`[TOOL_RESULT] ${toolUse.name}:`, result.substring(0, 200) + '...');
 

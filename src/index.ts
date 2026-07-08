@@ -8,7 +8,7 @@ import {
   SMSChannel,
   TACServer,
 } from 'twilio-agent-connect';
-import { handleMessage, clearConversation } from './agents/index.js';
+import { handleMessage, clearConversation, registerPendingCallSid } from './agents/index.js';
 
 const tac = await TAC.create({ config: TACConfig.fromEnv() });
 
@@ -18,6 +18,12 @@ const smsChannel = new SMSChannel(tac, {memoryMode: "always"});
 
 tac.registerChannel(voiceChannel);
 tac.registerChannel(smsChannel);
+
+// Capture the CallSid from the ConversationRelay setup so tools can
+// update the in-progress call (e.g. transfer_to_workflow) later.
+voiceChannel.on('setup', ({ callSid, from }) => {
+  registerPendingCallSid(from, callSid);
+});
 
 // Single handler for all channels — TAC routes the response back correctly
 tac.onMessageReady(async ({ conversationId, message, memory, session }) => {
