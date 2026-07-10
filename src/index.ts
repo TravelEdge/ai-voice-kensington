@@ -13,8 +13,16 @@ import { handleMessage, clearConversation, registerPendingCallSid } from './agen
 const tac = await TAC.create({ config: TACConfig.fromEnv() });
 
 // Register channels
-const voiceChannel = new VoiceChannel(tac, {memoryMode: "always"});
-const smsChannel = new SMSChannel(tac, {memoryMode: "always"});
+const voiceChannel = new VoiceChannel(tac, {
+  memoryMode: "never",
+  defaultTwimlOptions: {
+    speechTimeout: 800,
+    welcomeGreeting: "Welcome to Kensington Tours.  You have reached Live Answer - how can i help you today?"
+  }
+
+});
+const smsChannel = new SMSChannel(tac, {memoryMode: "never"});
+
 
 tac.registerChannel(voiceChannel);
 tac.registerChannel(smsChannel);
@@ -35,7 +43,5 @@ tac.onConversationEnded(({ session }) => {
   clearConversation(String(session.conversationId));
 });
 
-const server = new TACServer(tac, {port: 3000, conversationRelayConfig: {
-  welcomeGreeting: "Welcome to Kensington Tours.  You have reached Live Answer - how can i help you today?"
-}});
+const server = new TACServer(tac, {port: 3000});
 await server.start();
