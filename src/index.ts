@@ -9,6 +9,26 @@ import {
   TACServer,
 } from 'twilio-agent-connect';
 import { handleMessage, clearConversation, registerPendingCallSid } from './agents/index.js';
+import {
+  authenticate as leadDepoAuthenticate,
+  getAllDestinations,
+  getAllActivities,
+  getAllChannels,
+} from './tools/LeadDepo.js';
+
+const token = await leadDepoAuthenticate();
+
+//console.log(`AUTH TOKEN: ${token}`);
+const [destinations, activities, channels] = await Promise.all([
+  getAllDestinations(),
+  getAllActivities(),
+  getAllChannels(),
+]);
+console.log(
+  `[LeadDepo] Cached ${destinations.length} continents, ${activities.length} activities, ${channels.length} channels.`
+);
+
+//console.log(JSON.stringify(activities, null, 4));
 
 const tac = await TAC.create({ config: TACConfig.fromEnv() });
 
