@@ -15,10 +15,14 @@ import {
   getAllActivities,
   getAllChannels,
 } from './tools/LeadDepo.js';
+import { authenticate as tmtLegacyAuthenticate } from './tools/tmt-legacy.js';
+import { authenticate as tmtProfileAuthenticate } from './tools/tmt-profile.js';
 
-const token = await leadDepoAuthenticate();
 
-//console.log(`AUTH TOKEN: ${token}`);
+// pre-auth and cache entity values for leadDepo
+// caches desintations, activities and channels
+await leadDepoAuthenticate();
+
 const [destinations, activities, channels] = await Promise.all([
   getAllDestinations(),
   getAllActivities(),
@@ -28,6 +32,26 @@ console.log(
   `[LeadDepo] Cached ${destinations.length} continents, ${activities.length} activities, ${channels.length} channels.`
 );
 
+// Pre-cache TMT bearer tokens. Non-fatal — TMT service-account credentials
+// are provisioned during Week 1, so a missing/invalid config at boot should
+// not block the rest of the server from starting.
+await Promise.all([
+  tmtLegacyAuthenticate().then(
+    () => console.log('[tmt-legacy] Cached bearer token.'),
+    (err: unknown) =>
+      console.warn(
+        `[tmt-legacy] Startup auth skipped: ${err instanceof Error ? err.message : String(err)}`
+      )
+  ),
+  tmtProfileAuthenticate().then(
+    () => console.log('[tmt-profile] Cached bearer token.'),
+    (err: unknown) =>
+      console.warn(
+        `[tmt-profile] Startup auth skipped: ${err instanceof Error ? err.message : String(err)}`
+      )
+  ),
+]);
+
 //console.log(JSON.stringify(activities, null, 4));
 
 const tac = await TAC.create({ config: TACConfig.fromEnv() });
@@ -36,7 +60,7 @@ const tac = await TAC.create({ config: TACConfig.fromEnv() });
 const voiceChannel = new VoiceChannel(tac, {
   memoryMode: "never",
   defaultTwimlOptions: {
-    speechTimeout: 800,
+    speechTimeout: "auto",
     welcomeGreeting: "Welcome to Kensington Tours.  You have reached Live Answer - how can i help you today?"
   }
 
