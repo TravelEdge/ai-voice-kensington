@@ -32,6 +32,9 @@ console.log(
   `[LeadDepo] Cached ${destinations.length} continents, ${activities.length} activities, ${channels.length} channels.`
 );
 
+console.log("ACTIVITIES: " + JSON.stringify(activities, null, 4));
+console.log("CHANNELS: " + JSON.stringify(channels, null, 4));
+
 // Pre-cache TMT bearer tokens. Non-fatal — TMT service-account credentials
 // are provisioned during Week 1, so a missing/invalid config at boot should
 // not block the rest of the server from starting.

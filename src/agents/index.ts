@@ -9,7 +9,47 @@ import {
 } from 'twilio-agent-connect';
 
 import { TOOLS, getAllTools, executeTool, extractCustomerProfileId, getProfileTraitsForPrompt } from '../tools/index.js';
+import {
+  getCachedDestinations,
+  getCachedActivities,
+  getCachedChannels,
+} from '../tools/LeadDepo.js';
 import { AGENTS, AGENT_NAMES } from './prompts.js';
+
+/**
+ * Format the cached LeadDepo destinations/activities/channels as a reference
+ * catalog block for the IN_DESTINATION agent. Returns '' if caches aren't
+ * populated yet (e.g. startup auth still in flight).
+ */
+function formatLeadDepoCatalog(): string {
+  const destinations = getCachedDestinations();
+  const activities = getCachedActivities();
+  const channels = getCachedChannels();
+  if (!destinations || !activities || !channels) return '';
+
+  const destLines: string[] = [];
+  for (const continent of destinations) {
+    destLines.push(`  ${continent.continent}:`);
+    for (const country of continent.countries) {
+      destLines.push(`    - id=${country.id}: ${country.name}`);
+    }
+  }
+  const activityLines = activities.map(a => `  - id=${a.id}: ${a.name}`);
+  const channelLines = channels.map(c => `  - id=${c.id}: ${c.name}`);
+
+  return `\n\n## LEAD ASSIGNMENT REFERENCE CATALOG
+
+When calling the get_lead_assignment_queue tool, pass the numeric IDs from these lists — never pass names, and never invent IDs.
+
+### Destinations (grouped by continent)
+${destLines.join('\n')}
+
+### Activities
+${activityLines.join('\n')}
+
+### Channels
+${channelLines.join('\n')}`;
+}
 
 let claude: Anthropic | undefined;
 
@@ -46,7 +86,7 @@ const resolveCallSid = (session: ConversationSession): string | undefined => {
 };
 
 const preparePrompt = async (
-  
+  intent: string,
   profileId: string | undefined,
   memorySid: string | undefined,
   memory: TACMemoryResponse | undefined,
@@ -72,12 +112,18 @@ const preparePrompt = async (
 
   // Inject Twilio Conversation Memory + session context + profile traits into the system prompt
   const memoryContext = MemoryPromptBuilder.build(memory, session);
-  
+
+  // IN_DESTINATION agent needs the destination/activity/channel ID catalog so
+  // it can resolve names → numeric IDs before calling get_lead_assignment_queue.
+  const catalogContext =
+    intent === AGENT_NAMES.IN_DESTINATION ? formatLeadDepoCatalog() : '';
+
   const systemPrompt =
     prompt +
     dateTimeContext +
     (traitsContext ? traitsContext : '') +
-    (memoryContext ? `\n\n${memoryContext}` : '');
+    (memoryContext ? `\n\n${memoryContext}` : '') +
+    catalogContext;
 
   return systemPrompt;
 }
@@ -117,7 +163,7 @@ export async function handleMessage(tac: TAC, params: {
   const callSid = session.channel === 'voice' ? resolveCallSid(session) : undefined;
 
   // generate the prompt for the relevant agent
-  const systemPrompt = await preparePrompt(profileId, memorySid, memory, session, AGENTS[intent].prompt)
+  const systemPrompt = await preparePrompt(intent, profileId, memorySid, memory, session, AGENTS[intent].prompt)
   
   
   let response = await claude.messages.create({
@@ -211,6 +257,10 @@ export async function handleMessage(tac: TAC, params: {
 }
 
 export function clearConversation(conversationId: string): void {
+  // PRINT Conversation on hangup
+  console.log(JSON.stringify(histories.get(conversationId)), null, 4);
+
+  // then clear it
   histories.delete(conversationId);
   intents.delete(conversationId);
 }
