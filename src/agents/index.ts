@@ -13,7 +13,7 @@ import {
   getCachedDestinations,
   getCachedActivities,
   getCachedChannels,
-} from '../tools/LeadDepo.js';
+} from '../tools/lead-queue.js';
 import { AGENTS, AGENT_NAMES } from './prompts.js';
 
 /**
@@ -56,8 +56,17 @@ let claude: Anthropic | undefined;
 
 // Per-conversation message history keyed by conversationId
 const histories = new Map<string, Anthropic.MessageParam[]>();
-const intents = new Map<string, string>();
 
+class IntentMap extends Map<string, string> {
+  setAndLog(key: string, value: string): this {
+    const currentValue = super.get(key);
+    super.set(key, value);
+    if (!currentValue) console.log(`%cSET INITIAL INTENT: %c${value}`, "color: red;", "color: green;");
+    else console.log(`%cCHANGED INTENT: %c${currentValue} => %c${value}`, "color: red;", "color: blue;", "color: green;")
+    return this;
+  }
+}
+const intents = new IntentMap()
 
 // CallSid captured on ConversationRelay setup, keyed by the caller's address.
 // The voice channel exposes callSid on setup (before the conversation is
@@ -116,7 +125,7 @@ const preparePrompt = async (
   // IN_DESTINATION agent needs the destination/activity/channel ID catalog so
   // it can resolve names → numeric IDs before calling get_lead_assignment_queue.
   const catalogContext =
-    intent === AGENT_NAMES.IN_DESTINATION ? formatLeadDepoCatalog() : '';
+    intent === AGENT_NAMES.NEW_LEAD ? formatLeadDepoCatalog() : '';
 
   const systemPrompt =
     prompt +
@@ -138,18 +147,16 @@ export async function handleMessage(tac: TAC, params: {
 
   const { conversationId, message, memory, session } = params;
 
-  console.log(JSON.stringify(params, null, 4));
+  console.log("%cCUSTOMER INPUT: " + "%c" + message, "color: white;", "color: green;");
   const convId = String(conversationId);
 
    // initilaize conversation history in local array if it doesnt already exist
   if (!histories.has(convId)) histories.set(convId, []);
-  if (!intents.has(convId)) intents.set(convId, "INTENT_DETECTION");
+  if (!intents.has(convId)) intents.setAndLog(convId, "INTENT_DETECTION");
 
   // fetch the converstion
   const history = histories.get(convId)!;
   const intent = intents.get(convId)! as string;
-
-  console.log("INTENT IS:", intent);
 
   // store customers message
   history.push({ role: 'user', content: message });
@@ -182,7 +189,7 @@ export async function handleMessage(tac: TAC, params: {
   if (intent === "INTENT_DETECTION"){
     
     if(Object.values(AGENT_NAMES).includes(reply as AGENT_NAMES)) {
-      intents.set(convId, reply);
+      intents.setAndLog(convId, reply);
       return handleMessage(tac, { conversationId, message, memory, session })
     } else {
       history.push({ role: 'assistant', content: reply });
@@ -191,11 +198,14 @@ export async function handleMessage(tac: TAC, params: {
 
 
   } else if (reply === "CHANGE_INTENT"){
-    intents.set(convId, "INTENT_DETECTION");
+    intents.setAndLog(convId, "INTENT_DETECTION");
     return handleMessage(tac, { conversationId, message, memory, session })
   } else {
 
-    console.log("Claude Response: " + JSON.stringify(response, null, 4));
+    const { content } = response;
+    content.forEach((value, index) => {
+      if (value.type === "text") console.log(`%cCLAUDE RESPONSE[${index}]: %c` + value.text, "color: blue;", "color: green;")
+    })
     
     // Handle tool calls (agentic loop)
     while (response.stop_reason === 'tool_use') {
@@ -216,7 +226,10 @@ export async function handleMessage(tac: TAC, params: {
           const result = await executeTool(
             toolUse.name,
             toolUse.input as Record<string, unknown>,
-          { profileId, memorySid, callSid }
+            tac,
+            { profileId, memorySid, callSid },
+            session,
+            undefined
           );
           console.log(`[TOOL_RESULT] ${toolUse.name}:`, result.substring(0, 200) + '...');
 

@@ -14,9 +14,12 @@ import {
   getAllDestinations,
   getAllActivities,
   getAllChannels,
-} from './tools/LeadDepo.js';
+} from './tools/lead-queue.js';
 import { authenticate as tmtLegacyAuthenticate } from './tools/tmt-legacy.js';
 import { authenticate as tmtProfileAuthenticate } from './tools/tmt-profile.js';
+import enqueue_and_wait_routes from './additional-routes/enqueue-with-takeback.js'
+
+
 
 
 // pre-auth and cache entity values for leadDepo
@@ -32,8 +35,9 @@ console.log(
   `[LeadDepo] Cached ${destinations.length} continents, ${activities.length} activities, ${channels.length} channels.`
 );
 
-console.log("ACTIVITIES: " + JSON.stringify(activities, null, 4));
-console.log("CHANNELS: " + JSON.stringify(channels, null, 4));
+//console.log("ACTIVITIES: " + JSON.stringify(activities, null, 4));
+//console.log("CHANNELS: " + JSON.stringify(channels, null, 4));
+//console.log("DESTINIATIONS: " + JSON.stringify(destinations, null, 4));
 
 // Pre-cache TMT bearer tokens. Non-fatal — TMT service-account credentials
 // are provisioned during Week 1, so a missing/invalid config at boot should
@@ -64,7 +68,8 @@ const voiceChannel = new VoiceChannel(tac, {
   memoryMode: "never",
   defaultTwimlOptions: {
     speechTimeout: "auto",
-    welcomeGreeting: "Welcome to Kensington Tours.  You have reached Live Answer - how can i help you today?"
+    welcomeGreeting: "Welcome to Kensington Tours.  You have reached Live Answer - how can i help you today?",
+    actionUrl: `https://${process.env.TWILIO_VOICE_PUBLIC_DOMAIN}/enqueue-call`
   }
 
 });
@@ -91,4 +96,8 @@ tac.onConversationEnded(({ session }) => {
 });
 
 const server = new TACServer(tac, {port: 3000});
+
+// register custom routes
+await enqueue_and_wait_routes(server);
+
 await server.start();

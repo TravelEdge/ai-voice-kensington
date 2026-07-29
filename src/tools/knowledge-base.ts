@@ -4,8 +4,6 @@ import {
   createKnowledgeSearchTool
 } from 'twilio-agent-connect';
 
-// import { registerKnowledgeTool } from './agent.js';
-
 
 export const createKnowledgeToolFromConfig = (tac: TAC) => {
 

@@ -1,3 +1,5 @@
+import Anthropic from '@anthropic-ai/sdk';
+
 // LeadDepo — client for the LeadQueue API (Auth0 M2M bearer + reference data + queue lookup).
 // See LeadQueue-API-Consumer-Guide_2.md at the repo root for endpoint contracts.
 
@@ -196,8 +198,6 @@ async function apiGet<T>(
     response = await send(await getBearerToken());
   }
 
-
-  console.log("QUERY" + query + "\n" + "RESPONSE" + JSON.stringify(response, null, 4));
   return unwrap<T>(response, path);
 }
 
@@ -242,7 +242,7 @@ export function clearReferenceCache(): void {
  * Fetch the ranked advisor queue for a destination / activity / channel combo.
  * Not cached — reflects live advisor availability.
  */
-export async function getLeadAssignmentQueue(
+async function getLeadAssignmentQueue(
   params: LeadAssignmentQueueParams
 ): Promise<LeadAssignmentQueueResult[]> {
   return apiGet<LeadAssignmentQueueResult[]>('/LeadAssignments/Queue', {
@@ -253,3 +253,84 @@ export async function getLeadAssignmentQueue(
     ShowAdvisorLogs: params.showAdvisorLogs,
   });
 }
+
+export const GET_LEAD_ASSIGNMENT_QUEUE: Anthropic.Tool = {
+    name: 'get_lead_assignment_queue',
+    description:
+      `Return the ranked advisor (Destination Expert) queue for a destination + activity + channel combination. Use this to identify who the caller should be routed to. 
+       Resolve the numeric IDs from the LEAD ASSIGNMENT REFERENCE CATALOG that appears in the system prompt — do NOT invent IDs, and do NOT pass names.
+       If this service times out, call it again with the same parameters`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        destination_id: {
+          type: 'number',
+          description:
+            'Numeric ID of the destination country from the destinations section of the reference catalog.',
+        },
+        activity_id: {
+          type: 'number',
+          description:
+            'Numeric ID of the trip activity from the activities section of the reference catalog.',
+        },
+        channel_id: {
+          type: 'number',
+          description:
+            'Numeric ID of the channel from the channels section of the reference catalog.',
+        },
+        category_id: {
+          type: 'number',
+          description: 'Optional category filter ID.',
+        },
+        show_advisor_logs: {
+          type: 'boolean',
+          description:
+            'Optional. Include per-advisor decision logs in the response. Default false.',
+        },
+      },
+      required: ['destination_id', 'activity_id', 'channel_id'],
+    },
+  }
+
+  export async function executeGetLeadAssignmentQueue(toolInput: Record<string, unknown>): Promise<string> {
+    const {
+        destination_id,
+        activity_id,
+        channel_id,
+        category_id,
+        show_advisor_logs,
+      } = toolInput as {
+        destination_id?: number;
+        activity_id?: number;
+        channel_id?: number;
+        category_id?: number;
+        show_advisor_logs?: boolean;
+      };
+
+      if (
+        typeof destination_id !== 'number' ||
+        typeof activity_id !== 'number' ||
+        typeof channel_id !== 'number'
+      ) {
+        return 'Error: destination_id, activity_id, and channel_id are all required numeric IDs from the reference catalog.';
+      }
+
+      try {
+        const results = await getLeadAssignmentQueue({
+          destinationId: destination_id,
+          activityId: activity_id,
+          channelId: channel_id,
+          categoryId: category_id,
+          showAdvisorLogs: show_advisor_logs,
+        }) as unknown as Array<LeadAssignmentQueueResult>
+
+        const response = JSON.stringify(results, null, 2);
+        
+        if(results?.[0]?.selectedAdvisor) console.log("GET LEAD ASSIGNMENT RESULT: " + JSON.stringify(results?.[0].selectedAdvisor));
+        else console.log("GET LEAD ASSIGNMENT RESULT: " + "No selected advisor");
+        
+        return response;
+      } catch (err) {
+        return `Error fetching lead assignment queue: ${err instanceof Error ? err.message : String(err)}`;
+      }
+  }
