@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Twilio from 'twilio';
 import { TACServer } from 'twilio-agent-connect';
+import { createQuoteAgentLeadQueue } from '../tools/tmt-legacy.js';
 
 interface TwilioPayload {
     "Called": string
@@ -60,9 +61,29 @@ const enqueue_and_wait_routes = async (server: TACServer) => {
 
         console.log("WAIT URL: hit wait url")
         const response = new Twilio.twiml.VoiceResponse();
-        response.redirect('https://twimlets.com/holdmusic?Bucket=com.twilio.music.ambient')
+        response.pause({ length: 15 });
+        response.say("The specialist is currently busy, but your details have been captured and they will reach out to you when they are available.");
+        response.redirect({ method: 'POST' }, '/end-call-and-create-lead');
         reply.type('text/xml');
         await reply.send(response.toString());
+
+    });
+
+    server.fastify.post('/end-call-and-create-lead', async (request: FastifyRequest, reply: FastifyReply) => {
+
+        const { CallSid } = request.body as TwilioPayload;
+        console.log("END-CALL-AND-CREATE-LEAD: hit for CallSid " + CallSid);
+
+        await createQuoteAgentLeadQueue({});
+
+        const client = Twilio(
+            process.env.TWILIO_ACCOUNT_SID,
+            process.env.TWILIO_AUTH_TOKEN
+        );
+        await client.calls(CallSid).update({ status: 'completed' });
+
+        reply.type('text/xml');
+        await reply.send(new Twilio.twiml.VoiceResponse().toString());
 
     });
 
