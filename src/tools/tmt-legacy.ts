@@ -321,12 +321,110 @@ export async function searchNamePhoneEmail<T = unknown>(
 // Capability 2 — Lead Creation
 // ---------------------------------------------------------------------------
 
+/** Room-type dictionary entry referenced by traveler-room selections. */
+export interface RoomType {
+  Code?: string;
+  RoomTypeID?: number;
+  Name?: string;
+  AdultCapacity?: number;
+  MaxKidCapacity?: number;
+  DisplayOrder?: number;
+}
+
+/** One physical room in the enquiry with its occupants and configuration. */
+export interface TravelerRoom {
+  IsTwin?: boolean;
+  Adults?: number;
+  /** Ages (in years) of the children in this room. */
+  Children?: number[];
+  RoomType?: RoomType;
+}
+
+export interface BudgetInformation {
+  MaximumBudgetPerPerson?: string;
+  AirlineTravelIncludedInBudget?: boolean;
+  Priority?: string;
+}
+
+export interface TravelAgentInformation {
+  IsAgent?: boolean;
+  AssociationType?: string;
+  AssociationId?: string;
+}
+
+export interface LeadClient {
+  FirstName?: string;
+  LastName?: string;
+  Email?: string;
+  Phone?: string;
+}
+
+/** Structured lead payload embedded when CreateLead=true. */
+export interface LeadRequestInformation {
+  /** ISO-8601 date string. */
+  DepartureDate?: string;
+  Destination?: string;
+  LocaleId?: number;
+  ItineraryId?: number;
+  Comments?: string;
+  DateFlexible?: boolean;
+  TripLength?: number;
+  URL?: string;
+  TrackingParameters?: string;
+  CampaignUrl?: string;
+  Notes?: string;
+  Client?: LeadClient;
+  TravelerRooms?: TravelerRoom[];
+  BudgetInformation?: BudgetInformation;
+  TravelAgentInformation?: TravelAgentInformation;
+}
+
+/**
+ * Request body for POST /api/client/clientrequest/createnew.
+ * Mirrors the TE.TMT.APIContracts NewClientRequest DTO.
+ */
+export interface CreateNewClientRequest {
+  IsBaseItinerary?: boolean;
+  /** ISO-8601 date string. */
+  DepartureDate?: string;
+  NumAdults?: number;
+  NumChildren?: number;
+  /** Ages (in years) of children on the enquiry. */
+  ChildrenAges?: string[];
+  NumHotelRooms?: number;
+  ItineraryId?: number;
+  MinimumNumTourDays?: number;
+  MaximumNumTourDays?: number;
+  Destination?: string;
+  MaximumBudget?: string;
+  Notes?: string;
+  FirstName?: string;
+  LastName?: string;
+  Email?: string;
+  Phone?: string;
+  MobilePhone?: string;
+  MobilePhoneCanSms?: boolean;
+  PreferredContactMethod?: number;
+  CampaignUrl?: string;
+  LocaleId?: number;
+  DateFlexible?: boolean;
+  Triplength?: number;
+  URL?: string;
+  TrackingParameters?: string;
+  CreateLead?: boolean;
+  LeadRequestInformation?: LeadRequestInformation;
+  LeadType?: number;
+  DepartureAirport?: string;
+  CabinClassPreference?: string;
+  AirlineAlliancePreference?: string;
+}
+
 /**
  * Create a new inbound enquiry (client request) — standard entry point for
  * net-new callers after their profile has been created via the Profile API.
  */
 export async function createNewClientRequest<T = unknown>(
-  request: Record<string, unknown>
+  request: CreateNewClientRequest
 ): Promise<T | null> {
   return legacyApiPost<T>('/api/client/clientrequest/createnew', request);
 }
