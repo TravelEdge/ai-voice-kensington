@@ -325,7 +325,7 @@ export async function searchNamePhoneEmail<T = unknown>(
  * Create a new inbound enquiry (client request) — standard entry point for
  * net-new callers after their profile has been created via the Profile API.
  */
-export async function createClientRequest<T = unknown>(
+export async function createNewClientRequest<T = unknown>(
   request: Record<string, unknown>
 ): Promise<T | null> {
   return legacyApiPost<T>('/api/client/clientrequest/createnew', request);

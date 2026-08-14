@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Twilio from 'twilio';
 import { TACServer } from 'twilio-agent-connect';
-import { createQuoteAgentLeadQueue } from '../tools/tmt-legacy.js';
+import { createNewClientRequest } from '../tools/tmt-legacy.js';
 
 interface TwilioPayload {
     "Called": string
@@ -74,7 +74,7 @@ const enqueue_and_wait_routes = async (server: TACServer) => {
         const { CallSid } = request.body as TwilioPayload;
         console.log("END-CALL-AND-CREATE-LEAD: hit for CallSid " + CallSid);
 
-        await createQuoteAgentLeadQueue({});
+        await createNewClientRequest({});
 
         const client = Twilio(
             process.env.TWILIO_ACCOUNT_SID,
