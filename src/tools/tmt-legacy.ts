@@ -10,6 +10,13 @@
 //   - Retry with exponential backoff on 5xx / network timeouts, max 3 attempts (implemented here)
 //   - Do NOT retry 4xx (implemented — 401 is a one-shot refresh-and-retry, all others surface)
 
+import Anthropic from '@anthropic-ai/sdk';
+import { isStubMode } from '../stubs/index.js';
+import {
+  CREATE_NEW_CLIENT_REQUEST_STUB,
+  TMT_LEGACY_AUTH_STUB,
+} from '../stubs/tmt-legacy.js';
+
 interface TokenCache {
   accessToken: string;
   expiresAt: number;
@@ -59,6 +66,14 @@ function loadConfig(): TmtLegacyConfig {
 
 /** Fetch a fresh password-grant bearer token and store it in the module-level cache. */
 export async function authenticate(): Promise<string> {
+  if (isStubMode()) {
+    tokenCache = {
+      accessToken: TMT_LEGACY_AUTH_STUB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    };
+    console.log('[tmt-legacy] STUB: returning dummy bearer token');
+    return TMT_LEGACY_AUTH_STUB;
+  }
   const cfg = loadConfig();
 
   const body = new URLSearchParams({
@@ -426,8 +441,167 @@ export interface CreateNewClientRequest {
 export async function createNewClientRequest<T = unknown>(
   request: CreateNewClientRequest
 ): Promise<T | null> {
+  if (isStubMode()) {
+    console.log('[tmt-legacy] STUB: returning stubbed createNewClientRequest response');
+    return CREATE_NEW_CLIENT_REQUEST_STUB as T | null;
+  }
   return legacyApiPost<T>('/api/client/clientrequest/createnew', request);
 }
+
+/**
+ * Anthropic tool declaration for `create_new_client_request`. Exposed to the
+ * STACK_CALL agent so the LLM can record a callback request when live-agent
+ * transfer failed. Mirrors the CreateNewClientRequest interface above — all
+ * fields are optional; the LLM populates whatever it has captured.
+ */
+export const CREATE_NEW_CLIENT_REQUEST: Anthropic.Tool = {
+  name: 'create_new_client_request',
+  description:
+    'Record a callback request in the KT Legacy system when a caller could not be transferred to a live agent. Populate every field for which information was captured during the call; leave unknown fields out.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      FirstName: { type: 'string', description: "Caller's first name." },
+      LastName: { type: 'string', description: "Caller's last name." },
+      Email: { type: 'string', description: "Caller's email address." },
+      Phone: { type: 'string', description: "Caller's primary phone number." },
+      MobilePhone: { type: 'string', description: "Caller's mobile phone number." },
+      MobilePhoneCanSms: {
+        type: 'boolean',
+        description: 'True if the mobile number can receive SMS.',
+      },
+      PreferredContactMethod: {
+        type: 'number',
+        description: 'Enum for preferred contact method (confirm ID mapping with KT).',
+      },
+      NumAdults: { type: 'number', description: 'Number of adult travellers.' },
+      NumChildren: { type: 'number', description: 'Number of child travellers.' },
+      ChildrenAges: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Ages (in years) of children on the enquiry.',
+      },
+      NumHotelRooms: { type: 'number', description: 'Number of hotel rooms required.' },
+      Destination: { type: 'string', description: 'Country or region the caller wants to travel to.' },
+      DepartureDate: { type: 'string', description: 'ISO-8601 date for planned departure.' },
+      DateFlexible: { type: 'boolean', description: 'True if departure date is flexible.' },
+      Triplength: { type: 'number', description: 'Trip length in days.' },
+      MinimumNumTourDays: { type: 'number', description: 'Minimum tour length in days.' },
+      MaximumNumTourDays: { type: 'number', description: 'Maximum tour length in days.' },
+      MaximumBudget: { type: 'string', description: 'Overall maximum budget (currency string).' },
+      DepartureAirport: { type: 'string', description: 'Preferred departure airport (code or name).' },
+      CabinClassPreference: {
+        type: 'string',
+        description: 'Preferred cabin class (economy, business, first).',
+      },
+      AirlineAlliancePreference: {
+        type: 'string',
+        description: 'Preferred airline or alliance.',
+      },
+      Notes: { type: 'string', description: 'Free-text notes captured during the call.' },
+      ItineraryId: { type: 'number', description: 'Existing itinerary ID if the caller referenced one.' },
+      IsBaseItinerary: {
+        type: 'boolean',
+        description: 'True if the enquiry uses a base itinerary as its starting point.',
+      },
+      LocaleId: { type: 'number', description: 'Locale ID.' },
+      CampaignUrl: { type: 'string', description: 'Marketing campaign URL if known.' },
+      URL: { type: 'string', description: 'Referring URL if known.' },
+      TrackingParameters: { type: 'string', description: 'Marketing tracking parameters if known.' },
+      CreateLead: {
+        type: 'boolean',
+        description: 'When true, also populate LeadRequestInformation with a full structured lead payload.',
+      },
+      LeadType: { type: 'number', description: 'Lead type enum.' },
+      LeadRequestInformation: {
+        type: 'object',
+        description: 'Structured lead payload — populated when CreateLead=true.',
+        properties: {
+          DepartureDate: { type: 'string', description: 'ISO-8601 date for departure.' },
+          Destination: { type: 'string' },
+          LocaleId: { type: 'number' },
+          ItineraryId: { type: 'number' },
+          Comments: { type: 'string' },
+          DateFlexible: { type: 'boolean' },
+          TripLength: { type: 'number' },
+          URL: { type: 'string' },
+          TrackingParameters: { type: 'string' },
+          CampaignUrl: { type: 'string' },
+          Notes: { type: 'string' },
+          Client: {
+            type: 'object',
+            properties: {
+              FirstName: { type: 'string' },
+              LastName: { type: 'string' },
+              Email: { type: 'string' },
+              Phone: { type: 'string' },
+            },
+          },
+          TravelerRooms: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                IsTwin: { type: 'boolean' },
+                Adults: { type: 'number' },
+                Children: {
+                  type: 'array',
+                  items: { type: 'number' },
+                  description: 'Ages of children in this room.',
+                },
+                RoomType: {
+                  type: 'object',
+                  properties: {
+                    Code: { type: 'string' },
+                    RoomTypeID: { type: 'number' },
+                    Name: { type: 'string' },
+                    AdultCapacity: { type: 'number' },
+                    MaxKidCapacity: { type: 'number' },
+                    DisplayOrder: { type: 'number' },
+                  },
+                },
+              },
+            },
+          },
+          BudgetInformation: {
+            type: 'object',
+            properties: {
+              MaximumBudgetPerPerson: { type: 'string' },
+              AirlineTravelIncludedInBudget: { type: 'boolean' },
+              Priority: { type: 'string' },
+            },
+          },
+          TravelAgentInformation: {
+            type: 'object',
+            properties: {
+              IsAgent: { type: 'boolean' },
+              AssociationType: { type: 'string' },
+              AssociationId: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+/**
+ * Execute the create_new_client_request tool call. Wraps createNewClientRequest
+ * with the shape the tool-dispatch layer expects (string return, error → error
+ * string). The LLM receives the raw response so it can confirm success to the
+ * caller and include any returned identifiers.
+ */
+export const executeCreateNewClientRequest = async (
+  toolInput: Record<string, unknown>
+): Promise<string> => {
+  try {
+    const result = await createNewClientRequest(toolInput as CreateNewClientRequest);
+    return `client_request_created: ${JSON.stringify(result ?? {})}`;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `Failed to create client request: ${message}`;
+  }
+};
 
 /**
  * Create a case against a known profile — for existing customers with no

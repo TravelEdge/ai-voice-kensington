@@ -1,4 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { isStubMode } from '../stubs/index.js';
+import {
+  ACTIVITIES_STUB,
+  CHANNELS_STUB,
+  DESTINATIONS_STUB,
+  LEAD_ASSIGNMENT_QUEUE_STUB,
+  LEAD_QUEUE_AUTH_STUB,
+} from '../stubs/lead-queue.js';
 
 // LeadDepo — client for the LeadQueue API (Auth0 M2M bearer + reference data + queue lookup).
 // See LeadQueue-API-Consumer-Guide_2.md at the repo root for endpoint contracts.
@@ -12,7 +20,7 @@ export interface ApiEnvelope<T> {
 export interface Destination {
   id: number;
   name: string;
-  description: string;
+  description?: string;
   quickFilterApplicableId: number;
 }
 
@@ -25,7 +33,7 @@ export interface DestinationContinent {
 export interface Activity {
   id: number;
   name: string;
-  description: string;
+  description?: string;
   quickFilterApplicableId: number;
   externalId: string | null;
 }
@@ -33,26 +41,42 @@ export interface Activity {
 export interface Channel {
   id: number;
   name: string;
-  description: string;
+  description?: string;
   quickFilterApplicableId: number;
 }
 
 export interface LeadAssignmentAdvisor {
-  assignmentOrder: number | null;
-  advisorId: number;
-  advisorName: string;
-  priorityQueueId: string | null;
-  roundRobinQueueId: string | null;
-  lastReceivedLead: string | null;
-  isEligible: boolean;
-  currentLeadsCount: number;
-  maximumCurrentLeadsCapacity: number;
-  currentMonthlyLeadsCount: number;
-  maximumMonthlyLeadsCapacity: number;
-  shift: string | null;
-  isAvailable: boolean;
-  decisionLog: unknown | null;
-  currentCondition: string;
+  id?: number,
+  firstName?: string,
+  lastName?: string,
+  email?: string,
+  externalId?: string,
+  originId?: number,
+  timeZoneId?: number,
+  teamId?: number,
+  userType?: string,
+  reportsToId?: number,
+  receiveLeads?: boolean,
+  maxCapacity?: number,
+  maxMonthlyCapacity?: number,
+  startDate?: string,
+  dateCreated?: string,
+  dateModified?: string,
+  assignmentOrder?: number | null;
+  advisorId?: number;
+  advisorName?: string;
+  priorityQueueId?: string | null;
+  roundRobinQueueId?: string | null;
+  lastReceivedLead?: string | null;
+  isEligible?: boolean;
+  currentLeadsCount?: number;
+  maximumCurrentLeadsCapacity?: number;
+  currentMonthlyLeadsCount?: number;
+  maximumMonthlyLeadsCapacity?: number;
+  shift?: string | null;
+  isAvailable?: boolean;
+  decisionLog?: unknown | null;
+  currentCondition?: string;
 }
 
 export interface LeadAssignmentQueueResult {
@@ -121,6 +145,14 @@ function loadConfig(): LeadDepoConfig {
 
 /** Fetch a fresh Auth0 M2M bearer token and store it in the module-level cache. */
 export async function authenticate(): Promise<string> {
+  if (isStubMode()) {
+    tokenCache = {
+      accessToken: LEAD_QUEUE_AUTH_STUB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    };
+    console.log('[LeadDepo] STUB: returning dummy bearer token');
+    return LEAD_QUEUE_AUTH_STUB;
+  }
   const cfg = loadConfig();
 
   const response = await fetch(`https://${cfg.auth0Domain}/oauth/token`, {
@@ -206,6 +238,11 @@ export async function getAllDestinations(
   onlyAssignedDestinations = false
 ): Promise<DestinationContinent[]> {
   if (destinationsCache) return destinationsCache;
+  if (isStubMode()) {
+    console.log('[LeadDepo] STUB: returning stubbed destinations');
+    destinationsCache = DESTINATIONS_STUB;
+    return destinationsCache;
+  }
   destinationsCache = await apiGet<DestinationContinent[]>('/Destinations', {
     onlyAssignedDestinations,
   });
@@ -215,6 +252,11 @@ export async function getAllDestinations(
 /** Get all activities. Cached after first successful call. */
 export async function getAllActivities(): Promise<Activity[]> {
   if (activitiesCache) return activitiesCache;
+  if (isStubMode()) {
+    console.log('[LeadDepo] STUB: returning stubbed activities');
+    activitiesCache = ACTIVITIES_STUB;
+    return activitiesCache;
+  }
   activitiesCache = await apiGet<Activity[]>('/Activities');
   return activitiesCache;
 }
@@ -222,6 +264,11 @@ export async function getAllActivities(): Promise<Activity[]> {
 /** Get all channels. Cached after first successful call. */
 export async function getAllChannels(): Promise<Channel[]> {
   if (channelsCache) return channelsCache;
+  if (isStubMode()) {
+    console.log('[LeadDepo] STUB: returning stubbed channels');
+    channelsCache = CHANNELS_STUB;
+    return channelsCache;
+  }
   channelsCache = await apiGet<Channel[]>('/Channels');
   return channelsCache;
 }
@@ -245,6 +292,10 @@ export function clearReferenceCache(): void {
 async function getLeadAssignmentQueue(
   params: LeadAssignmentQueueParams
 ): Promise<LeadAssignmentQueueResult[]> {
+  if (isStubMode()) {
+    console.log('[LeadDepo] STUB: returning stubbed lead assignment queue');
+    return LEAD_ASSIGNMENT_QUEUE_STUB;
+  }
   return apiGet<LeadAssignmentQueueResult[]>('/LeadAssignments/Queue', {
     DestinationId: params.destinationId,
     ActivityId: params.activityId,

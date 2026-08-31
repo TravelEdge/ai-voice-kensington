@@ -1,3 +1,4 @@
+import Anthropic from '@anthropic-ai/sdk';
 import {
   TAC,
   MemoryPromptBuilder,
@@ -239,3 +240,99 @@ export async function updateProfileTraits(
     return false;
   }
 }
+
+/**
+ * Anthropic tool declaration for `update_new_lead_traits`. Exposed to the
+ * NEW_LEAD agent so the LLM can persist the caller's captured details to the
+ * NewLead trait group on the caller's Conversation Memory profile immediately
+ * before invoking handoff — that way the receiving agent (and any takeback
+ * flow) has structured caller context.
+ */
+export const UPDATE_NEW_LEAD_TRAITS: Anthropic.Tool = {
+  name: 'update_new_lead_traits',
+  description:
+    'Persist the caller information gathered during a NEW_LEAD call to the NewLead trait group on the caller profile in Twilio Conversation Memory. Call this immediately before invoking the handoff tool. Only pass fields you actually captured — omit unknowns.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      firstName: { type: 'string', description: 'First Name of the caller.' },
+      lastName: { type: 'string', description: 'Last name of the caller.' },
+      location: {
+        type: 'string',
+        description: 'The location the caller is interested in traveling to.',
+      },
+      numberOfTravelers: {
+        type: 'string',
+        description: 'The number of travelers the caller is trying to plan a trip for.',
+      },
+      phoneNumber: { type: 'string', description: 'Phone number of the caller.' },
+      travelDates: {
+        type: 'string',
+        description: 'The dates the caller is interested in traveling.',
+      },
+    },
+  },
+};
+
+// Kept in sync with the NewLead trait group in Conversation Memory (see
+// the trait table in the KT admin console).
+const NEW_LEAD_TRAIT_FIELDS = [
+  'firstName',
+  'lastName',
+  'location',
+  'numberOfTravelers',
+  'phoneNumber',
+  'travelDates',
+] as const;
+
+/**
+ * Execute the update_new_lead_traits tool call. Filters the LLM-supplied input
+ * to the known NewLead fields and PATCHes the profile via updateProfileTraits.
+ *
+ * The wider agent flow deliberately skips loading TAC memory for most intents
+ * to avoid biasing the LLM with prior conversation summaries — so this tool
+ * loads memory lazily on invocation (it always fires immediately before
+ * handoff) and resolves both the caller's profile ID and the memory store ID
+ * from TAC directly rather than accepting them via context.
+ */
+export const executeUpdateNewLeadTraits = async (
+  toolInput: Record<string, unknown>,
+  tac: TAC,
+  session: ConversationSession,
+): Promise<string> => {
+  let memory: TACMemoryResponse | undefined;
+  try {
+    memory = await tac.retrieveMemory(session);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[MEMORY] Failed to retrieve memory for trait update:', err);
+    return `Error: failed to load memory for profile lookup: ${message}`;
+  }
+
+  const profileId = extractCustomerProfileId(memory);
+  const memorySid = tac.getMemoryStoreId();
+
+  if (!profileId) {
+    return 'Error: cannot update NewLead traits — no customer profile ID resolved from the memory response.';
+  }
+  if (!memorySid) {
+    return 'Error: cannot update NewLead traits — TAC memory store is not configured.';
+  }
+
+  const newLead: Record<string, string> = {};
+  for (const key of NEW_LEAD_TRAIT_FIELDS) {
+    const value = toolInput[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      newLead[key] = value.trim();
+    }
+  }
+
+  if (Object.keys(newLead).length === 0) {
+    return 'Error: no NewLead trait values were provided.';
+  }
+
+  const ok = await updateProfileTraits(memorySid, profileId, { NewLead: newLead });
+  return ok
+    ? `new_lead_traits_updated: ${JSON.stringify(newLead)}`
+    : 'Failed to update NewLead traits';
+};

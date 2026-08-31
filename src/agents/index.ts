@@ -56,7 +56,19 @@ let claude: Anthropic | undefined;
 
 // Per-conversation message history keyed by conversationId
 const histories = new Map<string, Anthropic.MessageParam[]>();
+// Per-conversation memory cache
+// we dont want to load memory by default for any calls
+// only explicitly when about to handoff for a new lead
+// so we can save the new lead data (we never care about its presence)
+// and when we have a call returned from a handoff, so we can use that data
+const memoryCache =  new Map<string, TACMemoryResponse>();
+// Per-conversation cache of the formatted NewLead traits string. STACK_CALL
+// needs those traits injected into the system prompt on every turn — caching
+// avoids a round-trip to the Memory API each time the caller speaks.
+const traitsCache = new Map<string, string>();
 
+// extend the operations on Map so we can neatly log
+// intent changes
 class IntentMap extends Map<string, string> {
   setAndLog(key: string, value: string): this {
     const currentValue = super.get(key);
@@ -66,6 +78,8 @@ class IntentMap extends Map<string, string> {
     return this;
   }
 }
+
+// initialize a new intent map on startup
 const intents = new IntentMap()
 
 // CallSid captured on ConversationRelay setup, keyed by the caller's address.
@@ -74,8 +88,19 @@ const intents = new IntentMap()
 // on the caller's address to move it onto session.metadata.callSid.
 const pendingCallSidByFrom = new Map<string, string>();
 
+// ConversationRelay <Parameter> values captured on setup, keyed by from. Used
+// to signal takeback flows into handleMessage before the first user prompt.
+const pendingCustomParamsByFrom = new Map<string, Record<string, unknown>>();
+
 export function registerPendingCallSid(from: string, callSid: string): void {
   pendingCallSidByFrom.set(from, callSid);
+}
+
+export function registerPendingCustomParams(
+  from: string,
+  params: Record<string, unknown> | undefined
+): void {
+  if (params && Object.keys(params).length > 0) pendingCustomParamsByFrom.set(from, params);
 }
 
 const resolveCallSid = (session: ConversationSession): string | undefined => {
@@ -94,17 +119,34 @@ const resolveCallSid = (session: ConversationSession): string | undefined => {
   return callSid;
 };
 
+const resolveCustomParams = (
+  session: ConversationSession
+): Record<string, unknown> | undefined => {
+  const existing = session.metadata?.customParameters;
+  if (existing && typeof existing === 'object') return existing as Record<string, unknown>;
+
+  const from = session.authorInfo?.address;
+  if (!from) return undefined;
+
+  const params = pendingCustomParamsByFrom.get(from);
+  if (!params) return undefined;
+
+  if (!session.metadata) session.metadata = {};
+  session.metadata.customParameters = params;
+  pendingCustomParamsByFrom.delete(from);
+  return params;
+};
+
 const preparePrompt = async (
   intent: string,
-  profileId: string | undefined,
-  memorySid: string | undefined,
-  memory: TACMemoryResponse | undefined,
   session: ConversationSession,
-  prompt: string | undefined) => {
+  prompt: string | undefined,
+  traitsContext: string) => {
 
 
-  // Fetch profile traits if we have a profile ID
-  const traitsContext = process.env.TWILIO_MEMORY_LOAD_TRAITS ? await getProfileTraitsForPrompt(profileId, memorySid) : '';
+  // for intent detection, we only need the basic prompt
+  // this improves TTFT
+  if(intent === AGENT_NAMES.INTENT_DETECTION) return prompt;
 
   // Get current date and time for temporal context
   const now = new Date();
@@ -119,8 +161,20 @@ const preparePrompt = async (
     timeZone: 'America/New_York', // Adjust to your stadium's timezone
   })}`;
 
-  // Inject Twilio Conversation Memory + session context + profile traits into the system prompt
-  const memoryContext = MemoryPromptBuilder.build(memory, session);
+  // Inject Twilio Conversation Memory + session context into the system prompt
+  // for this solution we actually dont want to preserve any of the conversation
+  // history while talking to the bot
+  // const memoryContext = MemoryPromptBuilder.build(memory, session);
+
+  // Surface the caller's phone number to the LLM so it can confirm the callback
+  // number, tag it into tool calls (e.g., update_new_lead_traits.phoneNumber),
+  // and answer questions like "what number are you calling from?". TAC populates
+  // session.authorInfo.address with the E.164 number on voice-channel setup.
+  const callerAddress = session.authorInfo?.address;
+  const callerContext =
+    session.channel === 'voice' && callerAddress
+      ? `\n\nCaller phone number (E.164, from Twilio caller ID): ${callerAddress}`
+      : '';
 
   // IN_DESTINATION agent needs the destination/activity/channel ID catalog so
   // it can resolve names → numeric IDs before calling get_lead_assignment_queue.
@@ -130,8 +184,9 @@ const preparePrompt = async (
   const systemPrompt =
     prompt +
     dateTimeContext +
+    callerContext +
     (traitsContext ? traitsContext : '') +
-    (memoryContext ? `\n\n${memoryContext}` : '') +
+    // (memoryContext ? `\n\n${memoryContext}` : '') +
     catalogContext;
 
   return systemPrompt;
@@ -141,22 +196,36 @@ const preparePrompt = async (
 export async function handleMessage(tac: TAC, params: {
   conversationId: ConversationId;
   message: string;
-  memory: TACMemoryResponse | undefined;
   session: ConversationSession;
 }): Promise<string> {
 
-  const { conversationId, message, memory, session } = params;
+  const { conversationId, message, session } = params;
 
   console.log("%cCUSTOMER INPUT: " + "%c" + message, "color: white;", "color: green;");
   const convId = String(conversationId);
 
    // initilaize conversation history in local array if it doesnt already exist
   if (!histories.has(convId)) histories.set(convId, []);
-  if (!intents.has(convId)) intents.setAndLog(convId, "INTENT_DETECTION");
+  if (!intents.has(convId)) {
+    // If this session was reconnected via the takeback flow (see
+    // additional-routes/enqueue-with-takeback.ts), the ConversationRelay
+    // <Parameter> arrives on setup as customParameters. Skip intent
+    // detection and jump straight to STACK_CALL.
+    const customParams = session.channel === 'voice' ? resolveCustomParams(session) : undefined;
+    const takeback = customParams?.takeback;
+    if (takeback === 'true' || takeback === true) {
+      intents.setAndLog(convId, "STACK_CALL");
+      memoryCache.set(convId, await tac.retrieveMemory(session));
+    } else {
+      intents.setAndLog(convId, "INTENT_DETECTION");
+    }
+  }
 
   // fetch the converstion
   const history = histories.get(convId)!;
   const intent = intents.get(convId)! as string;
+  const memory = memoryCache.get(convId) as TACMemoryResponse | undefined;
+  const profileId = memory ? extractCustomerProfileId(memory) : "";
 
   // store customers message
   history.push({ role: 'user', content: message });
@@ -165,12 +234,28 @@ export async function handleMessage(tac: TAC, params: {
   claude ??= new Anthropic();
 
   // Extract customer profile ID from TAC memory response
-  const profileId = extractCustomerProfileId(memory);
   const memorySid = process.env.TWILIO_MEMORY_STORE_ID;
   const callSid = session.channel === 'voice' ? resolveCallSid(session) : undefined;
 
+  // Resolve traits context for STACK_CALL — fetch once on first turn, then
+  // reuse the cached string on every subsequent turn to avoid hitting the
+  // Memory API on each customer utterance.
+  let traitsContext = '';
+  if (intent === AGENT_NAMES.STACK_CALL) {
+    const cached = traitsCache.get(convId);
+    if (cached !== undefined) {
+      traitsContext = cached;
+    } else {
+      const fetched = await getProfileTraitsForPrompt(profileId, memorySid);
+      if (fetched) {
+        traitsCache.set(convId, fetched);
+        traitsContext = fetched;
+      }
+    }
+  }
+
   // generate the prompt for the relevant agent
-  const systemPrompt = await preparePrompt(intent, profileId, memorySid, memory, session, AGENTS[intent].prompt)
+  const systemPrompt = await preparePrompt(intent, session, AGENTS[intent].prompt, traitsContext)
   
   
   let response = await claude.messages.create({
@@ -190,7 +275,7 @@ export async function handleMessage(tac: TAC, params: {
     
     if(Object.values(AGENT_NAMES).includes(reply as AGENT_NAMES)) {
       intents.setAndLog(convId, reply);
-      return handleMessage(tac, { conversationId, message, memory, session })
+      return handleMessage(tac, { conversationId, message, session })
     } else {
       history.push({ role: 'assistant', content: reply });
       return reply;
@@ -199,7 +284,7 @@ export async function handleMessage(tac: TAC, params: {
 
   } else if (reply === "CHANGE_INTENT"){
     intents.setAndLog(convId, "INTENT_DETECTION");
-    return handleMessage(tac, { conversationId, message, memory, session })
+    return handleMessage(tac, { conversationId, message, session })
   } else {
 
     const { content } = response;
@@ -269,11 +354,26 @@ export async function handleMessage(tac: TAC, params: {
 }
 }
 
-export function clearConversation(conversationId: string): void {
-  // PRINT Conversation on hangup
-  console.log(JSON.stringify(histories.get(conversationId)), null, 4);
+export function clearConversation(session: ConversationSession): void {
+  const convId = String(session.conversationId);
+  const from = session.authorInfo?.address;
 
-  // then clear it
-  histories.delete(conversationId);
-  intents.delete(conversationId);
+  // PRINT Conversation on hangup
+  console.log(JSON.stringify(histories.get(convId), null, 4));
+
+  // Purge every per-conversation cache so a hung-up call doesn't leak state
+  // into a subsequent one on the same caller number.
+  histories.delete(convId);
+  intents.delete(convId);
+  memoryCache.delete(convId);
+  traitsCache.delete(convId);
+
+  // The pending maps are keyed by the caller's E.164 address (populated on
+  // ConversationRelay setup). They normally clear themselves on the first
+  // prompt via resolveCallSid/resolveCustomParams, but a caller who hangs up
+  // before saying anything would leak an entry — sweep them here too.
+  if (from) {
+    pendingCallSidByFrom.delete(from);
+    pendingCustomParamsByFrom.delete(from);
+  }
 }

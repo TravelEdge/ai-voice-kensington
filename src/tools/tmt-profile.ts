@@ -7,6 +7,9 @@
 // Response shape: Profile API wraps results in a generic envelope with the
 // actual record(s) under `response`. See ProfileEnvelope<T> below.
 
+import { isStubMode } from '../stubs/index.js';
+import { TMT_PROFILE_AUTH_STUB } from '../stubs/tmt-profile.js';
+
 /** Generic Profile API response envelope. Records live under `response`. */
 export interface ProfileEnvelope<T> {
   request?: unknown;
@@ -69,6 +72,14 @@ function loadConfig(): TmtProfileConfig {
 
 /** Fetch a fresh client_credentials bearer token and store it in the module-level cache. */
 export async function authenticate(): Promise<string> {
+  if (isStubMode()) {
+    tokenCache = {
+      accessToken: TMT_PROFILE_AUTH_STUB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    };
+    console.log('[tmt-profile] STUB: returning dummy bearer token');
+    return TMT_PROFILE_AUTH_STUB;
+  }
   const cfg = loadConfig();
 
   const body = new URLSearchParams({

@@ -14,13 +14,32 @@ import {
   executeHandoff
 } from './handoff.js'
 
+import {
+  CREATE_NEW_CLIENT_REQUEST,
+  executeCreateNewClientRequest
+} from './tmt-legacy.js'
+
+
+import {
+  UPDATE_NEW_LEAD_TRAITS,
+  executeUpdateNewLeadTraits,
+} from './memory-client.js';
+
+import {
+  END_CALL,
+  executeEndCall
+} from './end-call.js'
+
 
 export { extractCustomerProfileId, getProfileTraitsForPrompt } from './memory-client.js';
 
 // Tool definitions for Claude so claude knows how to use them
 export const TOOLS: Anthropic.Tool[] = [
   HANDOFF,
-  GET_LEAD_ASSIGNMENT_QUEUE
+  GET_LEAD_ASSIGNMENT_QUEUE,
+  CREATE_NEW_CLIENT_REQUEST,
+  UPDATE_NEW_LEAD_TRAITS,
+  END_CALL
 ];
 
 
@@ -50,6 +69,18 @@ export const executeTool = async (
 
     case 'handoff': {
       return await executeHandoff(toolInput, tac, session)
+    }
+
+    case 'create_new_client_request': {
+      return await executeCreateNewClientRequest(toolInput);
+    }
+
+    case 'update_new_lead_traits': {
+      return await executeUpdateNewLeadTraits(toolInput, tac, session);
+    }
+
+    case 'end_call': {
+      return await executeEndCall(toolInput, session);
     }
 
     default:
