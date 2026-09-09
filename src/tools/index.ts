@@ -30,6 +30,11 @@ import {
   executeEndCall
 } from './end-call.js'
 
+import {
+  SEND_LEAD_EMAIL,
+  executeSendLeadEmail
+} from './send-email.js'
+
 
 export { extractCustomerProfileId, getProfileTraitsForPrompt } from './memory-client.js';
 
@@ -39,7 +44,8 @@ export const TOOLS: Anthropic.Tool[] = [
   GET_LEAD_ASSIGNMENT_QUEUE,
   CREATE_NEW_CLIENT_REQUEST,
   UPDATE_NEW_LEAD_TRAITS,
-  END_CALL
+  END_CALL,
+  SEND_LEAD_EMAIL
 ];
 
 
@@ -81,6 +87,10 @@ export const executeTool = async (
 
     case 'end_call': {
       return await executeEndCall(toolInput, session);
+    }
+
+    case 'send_lead_email': {
+      return await executeSendLeadEmail(toolInput);
     }
 
     default:
