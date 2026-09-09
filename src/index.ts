@@ -69,7 +69,8 @@ const voiceChannel = new VoiceChannel(tac, {
   defaultTwimlOptions: {
     speechTimeout: "auto",
     welcomeGreeting: "Welcome to Kensington Tours.  You have reached Live Answer - how can i help you today?",
-    actionUrl: `https://${process.env.TWILIO_VOICE_PUBLIC_DOMAIN}/enqueue-or-end-call`
+    actionUrl: `https://${process.env.TWILIO_VOICE_PUBLIC_DOMAIN}/enqueue-or-end-call`,
+    voice: 'lxYfHSkYm1EzQzGhdbfc'
   }
 
 });
