@@ -69,7 +69,7 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
 
         console.log("WAIT URL: hit wait url")
         const response = new Twilio.twiml.VoiceResponse();
-        response.pause({ length: 15 });
+        response.play("https://amber-pig-5530.twil.io/assets/DefaultMusic30s.wav");
         response.redirect({ method: 'POST' }, '/redirect-back-to-agent');
         reply.type('text/xml');
         await reply.send(response.toString());
