@@ -1,7 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk"
 
+import type { ConversationSession } from 'twilio-agent-connect';
+
 import {
-  GET_LEAD_ASSIGNMENT_QUEUE } from '../tools/lead-queue.js';
+  GET_LEAD_ASSIGNMENT_QUEUE,
+  getCachedDestinations,
+  getCachedActivities,
+  getCachedChannels,
+} from '../tools/lead-queue.js';
 
 import {
   HANDOFF
@@ -259,4 +265,94 @@ export const AGENTS : Record<string, AGENT> = {
             Do not use markdown, asterisks, bullets, or emojis.`
     }
 
+}
+
+/**
+ * Format the cached LeadDepo destinations/activities/channels as a reference
+ * catalog block for the IN_DESTINATION agent. Returns '' if caches aren't
+ * populated yet (e.g. startup auth still in flight).
+ */
+function formatLeadDepoCatalog(): string {
+  const destinations = getCachedDestinations();
+  const activities = getCachedActivities();
+  const channels = getCachedChannels();
+  if (!destinations || !activities || !channels) return '';
+
+  const destLines: string[] = [];
+  for (const continent of destinations) {
+    destLines.push(`  ${continent.continent}:`);
+    for (const country of continent.countries) {
+      destLines.push(`    - id=${country.id}: ${country.name}`);
+    }
+  }
+  const activityLines = activities.map(a => `  - id=${a.id}: ${a.name}`);
+  const channelLines = channels.map(c => `  - id=${c.id}: ${c.name}`);
+
+  return `\n\n## LEAD ASSIGNMENT REFERENCE CATALOG
+
+When calling the get_lead_assignment_queue tool, pass the numeric IDs from these lists — never pass names, and never invent IDs.
+
+### Destinations (grouped by continent)
+${destLines.join('\n')}
+
+### Activities
+${activityLines.join('\n')}
+
+### Channels
+${channelLines.join('\n')}`;
+}
+
+export const preparePrompt = async (
+  intent: string,
+  session: ConversationSession,
+  prompt: string | undefined,
+  traitsContext: string) => {
+
+
+  // for intent detection, we only need the basic prompt
+  // this improves TTFT
+  if(intent === AGENT_NAMES.INTENT_DETECTION) return prompt;
+
+  // Get current date and time for temporal context
+  const now = new Date();
+  const dateTimeContext = `\n\nCurrent date and time: ${now.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'America/New_York', // Adjust to your stadium's timezone
+  })}`;
+
+  // Inject Twilio Conversation Memory + session context into the system prompt
+  // for this solution we actually dont want to preserve any of the conversation
+  // history while talking to the bot
+  // const memoryContext = MemoryPromptBuilder.build(memory, session);
+
+  // Surface the caller's phone number to the LLM so it can confirm the callback
+  // number, tag it into tool calls (e.g., update_new_lead_traits.phoneNumber),
+  // and answer questions like "what number are you calling from?". TAC populates
+  // session.authorInfo.address with the E.164 number on voice-channel setup.
+  const callerAddress = session.authorInfo?.address;
+  const callerContext =
+    session.channel === 'voice' && callerAddress
+      ? `\n\nCaller phone number (E.164, from Twilio caller ID): ${callerAddress}`
+      : '';
+
+  // IN_DESTINATION agent needs the destination/activity/channel ID catalog so
+  // it can resolve names → numeric IDs before calling get_lead_assignment_queue.
+  const catalogContext =
+    intent === AGENT_NAMES.NEW_LEAD ? formatLeadDepoCatalog() : '';
+
+  const systemPrompt =
+    prompt +
+    dateTimeContext +
+    callerContext +
+    (traitsContext ? traitsContext : '') +
+    // (memoryContext ? `\n\n${memoryContext}` : '') +
+    catalogContext;
+
+  return systemPrompt;
 }
