@@ -2,8 +2,13 @@
 // Loads .env, invokes executeSendLeadEmail with a fake NEW_LEAD payload,
 // and prints the tool's return string. Run with:
 //   npx tsx scripts/test-send-email.ts
-import { config } from 'dotenv';
-config();
+//
+// `import 'dotenv/config'` MUST be first: it populates process.env as a
+// side effect of import resolution, before send-email.js (which pulls in
+// logger.ts) reads env at module init. The older `import { config }; config()`
+// pattern runs config() too late in ESM because imports are hoisted above
+// the statement.
+import 'dotenv/config';
 
 import { executeSendLeadEmail } from '../src/tools/send-email.js';
 

@@ -10,6 +10,7 @@ import {
   LEAD_ASSIGNMENT_QUEUE_STUB,
   LEAD_QUEUE_AUTH_STUB,
 } from '../stubs/lead-queue.js';
+import { contextLog } from '../logger.js';
 
 // Response logging destination for get_lead_assignment_queue. Colocated with
 // the canned stubs so recorded live responses can be lifted straight into
@@ -33,8 +34,13 @@ async function logLeadAssignmentQueueResponse(response: string): Promise<void> {
     const filePath = path.join(LEAD_ASSIGNMENT_LOG_DIR, `${timestamp}.json`);
     await fs.writeFile(filePath, response, 'utf8');
   } catch (err) {
-    console.warn(
-      `[lead-queue] Failed to log API response: ${err instanceof Error ? err.message : String(err)}`
+    contextLog().warn(
+      {
+        backend: 'LeadDepo',
+        err: err instanceof Error ? err.message : String(err),
+        description: 'Failed to write API response to the stub-log directory',
+      },
+      'STUB_LOG_WRITE_FAILED',
     );
   }
 }
@@ -181,7 +187,10 @@ export async function authenticate(): Promise<string> {
       accessToken: LEAD_QUEUE_AUTH_STUB,
       expiresAt: Date.now() + 60 * 60 * 1000,
     };
-    console.log('[LeadDepo] STUB: returning dummy bearer token');
+    contextLog().info(
+      { backend: 'LeadDepo', description: 'Returning dummy bearer token' },
+      'STUBBED_RESPONSE',
+    );
     return LEAD_QUEUE_AUTH_STUB;
   }
   const cfg = loadConfig();
@@ -270,7 +279,10 @@ export async function getAllDestinations(
 ): Promise<DestinationContinent[]> {
   if (destinationsCache) return destinationsCache;
   if (isStubMode()) {
-    console.log('[LeadDepo] STUB: returning stubbed destinations');
+    contextLog().info(
+      { backend: 'LeadDepo', description: 'Returning stubbed destinations' },
+      'STUBBED_RESPONSE',
+    );
     destinationsCache = DESTINATIONS_STUB;
     return destinationsCache;
   }
@@ -284,7 +296,10 @@ export async function getAllDestinations(
 export async function getAllActivities(): Promise<Activity[]> {
   if (activitiesCache) return activitiesCache;
   if (isStubMode()) {
-    console.log('[LeadDepo] STUB: returning stubbed activities');
+    contextLog().info(
+      { backend: 'LeadDepo', description: 'Returning stubbed activities' },
+      'STUBBED_RESPONSE',
+    );
     activitiesCache = ACTIVITIES_STUB;
     return activitiesCache;
   }
@@ -296,7 +311,10 @@ export async function getAllActivities(): Promise<Activity[]> {
 export async function getAllChannels(): Promise<Channel[]> {
   if (channelsCache) return channelsCache;
   if (isStubMode()) {
-    console.log('[LeadDepo] STUB: returning stubbed channels');
+    contextLog().info(
+      { backend: 'LeadDepo', description: 'Returning stubbed channels' },
+      'STUBBED_RESPONSE',
+    );
     channelsCache = CHANNELS_STUB;
     return channelsCache;
   }
@@ -324,7 +342,10 @@ async function getLeadAssignmentQueue(
   params: LeadAssignmentQueueParams
 ): Promise<LeadAssignmentQueueResult[]> {
   if (isStubMode()) {
-    console.log('[LeadDepo] STUB: returning stubbed lead assignment queue');
+    contextLog().info(
+      { backend: 'LeadDepo', description: 'Returning stubbed lead assignment queue' },
+      'STUBBED_RESPONSE',
+    );
     return LEAD_ASSIGNMENT_QUEUE_STUB;
   }
   return apiGet<LeadAssignmentQueueResult[]>('/LeadAssignments/Queue', {
@@ -407,9 +428,6 @@ export const GET_LEAD_ASSIGNMENT_QUEUE: Anthropic.Tool = {
         }) as unknown as Array<LeadAssignmentQueueResult>
 
         const response = JSON.stringify(results, null, 2);
-
-        if(results?.[0]?.selectedAdvisor) console.log("GET LEAD ASSIGNMENT RESULT: " + JSON.stringify(results?.[0].selectedAdvisor));
-        else console.log("GET LEAD ASSIGNMENT RESULT: " + "No selected advisor");
 
         await logLeadAssignmentQueueResponse(response);
 

@@ -90,5 +90,15 @@ export function registerTwimlQueryCarrier(server: TACServer): void {
     }, TWIML_QUERY_TTL_MS);
     timer.unref?.();
     twimlQueryTimers.set(callSid, timer);
+
+    request.log.child({ type: 'session' }).info(
+      {
+        route: '/twiml',
+        callSid,
+        query,
+        description: 'Captured inbound /twiml URL query params for onInboundCallTwiml customizer',
+      },
+      'CUSTOM_ROUTE',
+    );
   });
 }

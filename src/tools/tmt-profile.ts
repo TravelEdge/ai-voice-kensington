@@ -9,6 +9,7 @@
 
 import { isStubMode } from '../stubs/index.js';
 import { TMT_PROFILE_AUTH_STUB } from '../stubs/tmt-profile.js';
+import { contextLog } from '../logger.js';
 
 /** Generic Profile API response envelope. Records live under `response`. */
 export interface ProfileEnvelope<T> {
@@ -77,7 +78,10 @@ export async function authenticate(): Promise<string> {
       accessToken: TMT_PROFILE_AUTH_STUB,
       expiresAt: Date.now() + 60 * 60 * 1000,
     };
-    console.log('[tmt-profile] STUB: returning dummy bearer token');
+    contextLog().info(
+      { backend: 'tmt-profile', description: 'Returning dummy bearer token' },
+      'STUBBED_RESPONSE',
+    );
     return TMT_PROFILE_AUTH_STUB;
   }
   const cfg = loadConfig();

@@ -1,6 +1,11 @@
-import { config } from 'dotenv';
-config();
+// dotenv MUST run before any other import's module-body code executes, because
+// modules like ./logger.js read process.env at import time. `import 'dotenv/config'`
+// is the side-effect form that populates process.env during import resolution;
+// the older `import { config } from 'dotenv'; config()` pattern runs config()
+// too late in ES modules (imports are hoisted above the config() statement).
+import 'dotenv/config';
 
+import Fastify from 'fastify';
 import {
   TAC,
   TACConfig,
@@ -25,11 +30,20 @@ import {
   normalizeBoolParam,
   registerTwimlQueryCarrier,
 } from './additional-routes/twiml-query-carrier.js';
+import {
+  logger,
+  sessionLog,
+  isLogEnabled,
+  recordInterruptTimestamp,
+} from './logger.js';
 
 
 await cacheBackendData();
 
-const tac = await TAC.create({ config: TACConfig.fromEnv() });
+// Hand the shared pino instance to TAC so its own logs (channel registration,
+// conversation lifecycle, memory client, etc.) flow through the same
+// transport as ours.
+const tac = await TAC.create({ config: TACConfig.fromEnv(), logger });
 
 // speechTimeout accepts "auto" or a number of seconds; env vars are strings so
 // we coerce numeric values here.
@@ -111,6 +125,12 @@ voiceChannel.on('setup', ({ callSid, from, customParameters }) => {
 // finish the interrupted thought.
 voiceChannel.on('interrupt', ({ conversationId, utteranceUntilInterrupt, durationUntilInterruptMs }) => {
   const convId = String(conversationId);
+
+  // Reset the response-time clock: the caller has been "waiting" since this
+  // moment (the barge-in), not since ASR later delivers the transcribed prompt.
+  // handleMessage's next invocation consumes this via runInSession.
+  recordInterruptTimestamp(convId);
+
   const history = histories.get(convId);
   if (!history || history.length === 0) return;
 
@@ -126,12 +146,12 @@ voiceChannel.on('interrupt', ({ conversationId, utteranceUntilInterrupt, duratio
     last.content = `${spoken} [caller interrupted]`;
   }
 
-  console.log(
-    `%cINTERRUPT: %c${spoken || '(nothing spoken)'} %c(${durationUntilInterruptMs ?? 0}ms)`,
-    'color: yellow;',
-    'color: green;',
-    'color: gray;',
-  );
+  if (isLogEnabled('INTERRUPT')) {
+    sessionLog(convId).info(
+      { utterance: spoken || null, durationUntilInterruptMs: durationUntilInterruptMs ?? 0 },
+      'INTERRUPT',
+    );
+  }
 });
 
 // Single handler for all channels — TAC routes the response back correctly
@@ -144,7 +164,25 @@ tac.onConversationEnded(({ session }) => {
   clearConversation(session);
 });
 
-const server = new TACServer(tac, {port: 3000});
+// Build our own Fastify instance so we can share the pino logger with TAC.
+// `disableRequestLogging` silences the "incoming request" / "request completed"
+// per-request noise while preserving error logs. It emits a FSTDEP023
+// deprecation notice pointing at the future `logController` API, but the
+// runtime rejects the object form of that new API in Fastify 5.x — the
+// top-level flag is the working path until Fastify 6 lands.
+// The `as any` on fastifyInstance sidesteps a Fastify 5 type-strictness
+// issue where passing `loggerInstance` shifts the inferred generic away from
+// TAC's expected FastifyInstance shape. No runtime impact.
+const fastifyApp = Fastify({
+  loggerInstance: logger,
+  disableRequestLogging: true,
+});
+
+const server = new TACServer(tac, {
+  port: 3000,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fastifyInstance: fastifyApp as any,
+});
 
 // register custom routes
 await enqueue_and_wait_routes(server, tac);

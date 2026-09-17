@@ -1,11 +1,75 @@
 import fastifyStatic from '@fastify/static';
-import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyBaseLogger, FastifyRequest, FastifyReply } from 'fastify';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Twilio from 'twilio';
 import { TAC, TACServer } from 'twilio-agent-connect';
 
 import { getProfileTraitsForPrompt } from '../tools/memory-client.js';
+import { clearConversationById } from '../agents/index.js';
+import { lookupConversationIdByCallSid } from '../logger.js';
+
+// Belt-and-braces cleanup for CR sessions that end without a proper handoff
+// (customer hang-up or end_call tool). In Orchestrator mode TAC only fires
+// its onConversationEnded callback when Conversation Orchestrator posts a
+// CLOSED status back to TAC — which doesn't happen unless something CLOSES
+// the CO conversation. We do both:
+//   1. Fire-and-forget close the CO conversation via REST so TAC's internal
+//      activeConversations map (and any CO-side downstream) sees the CLOSED
+//      transition — this fires the normal onConversationEnded pathway.
+//   2. Directly call clearConversationById so our in-memory state (histories,
+//      intents, caches, session-context side maps) is evicted RIGHT NOW,
+//      independent of whether the CO webhook lands.
+// The direct call is safe to run alongside the webhook-driven cleanup because
+// clearConversationById is idempotent.
+async function finalizeConversation(
+    tac: TAC,
+    log: FastifyBaseLogger,
+    callSid: string,
+    reason: string,
+): Promise<void> {
+    const convId = lookupConversationIdByCallSid(callSid);
+    if (!convId) {
+        log.warn(
+            {
+                callSid,
+                reason,
+                description: 'CR session ended but no conversationId is registered for this CallSid — nothing to clean up',
+            },
+            'CUSTOM_ROUTE',
+        );
+        return;
+    }
+
+    const coClient = tac.getConversationClient();
+    if (coClient) {
+        try {
+            await coClient.updateConversation(convId, 'CLOSED');
+            log.info(
+                {
+                    callSid,
+                    conversationId: convId,
+                    reason,
+                    description: 'Marked CO conversation CLOSED — TAC onConversationEnded webhook path should now fire',
+                },
+                'CUSTOM_ROUTE',
+            );
+        } catch (err) {
+            log.warn(
+                {
+                    callSid,
+                    conversationId: convId,
+                    reason,
+                    err: err instanceof Error ? err.message : String(err),
+                    description: 'Failed to CLOSE CO conversation — proceeding with direct cleanup anyway',
+                },
+                'CUSTOM_ROUTE',
+            );
+        }
+    }
+
+    clearConversationById(convId, undefined);
+}
 
 interface TwilioPayload {
     "Called": string
@@ -70,13 +134,23 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
     });
 
     server.fastify.post('/waitUrl', async (request: FastifyRequest, reply: FastifyReply) => {
+        const log = request.log.child({ type: 'session' });
 
-        console.log("WAIT URL: hit wait url")
         // profileId hitchhikes on the query string from /enqueue-or-end-call so
         // /redirect-back-to-agent can prefetch traits without needing to look up
         // the task. This is Twilio-agnostic — no reliance on TaskAttributes
         // being echoed back in the waitUrl POST body.
         const { profileId } = (request.query ?? {}) as { profileId?: string };
+        const callSid = (request.body as { CallSid?: string } | undefined)?.CallSid;
+        log.info(
+            {
+                route: '/waitUrl',
+                callSid,
+                profileId: profileId ?? null,
+                description: 'Hold-music wait URL hit — TaskRouter is holding the caller before takeback',
+            },
+            'CUSTOM_ROUTE',
+        );
         const response = new Twilio.twiml.VoiceResponse();
         response.play("https://amber-pig-5530.twil.io/assets/DefaultMusic60s.wav");
         const redirectTarget = profileId
@@ -89,10 +163,19 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
     });
 
     server.fastify.post('/redirect-back-to-agent', async (request: FastifyRequest, reply: FastifyReply) => {
+        const log = request.log.child({ type: 'session' });
 
         const { CallSid } = request.body as TwilioPayload;
         const { profileId } = (request.query ?? {}) as { profileId?: string };
-        console.log("END-CALL-AND-CREATE-LEAD: hit for CallSid " + CallSid);
+        log.info(
+            {
+                route: '/redirect-back-to-agent',
+                callSid: CallSid,
+                profileId: profileId ?? null,
+                description: 'Takeback flow triggered — reissuing ConversationRelay after TaskRouter failed to reserve an agent',
+            },
+            'CUSTOM_ROUTE',
+        );
 
         // Delete any conversation already grouped under this CallSid before we
         // reissue <ConversationRelay>. Orchestrator creates a fresh conversation
@@ -104,6 +187,16 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
         const conversationClient = tac.getConversationClient();
         if (conversationClient) {
             const existing = await conversationClient.listConversations({ channelId: CallSid });
+            if (existing.length > 0) {
+                log.info(
+                    {
+                        callSid: CallSid,
+                        staleConversationIds: existing.map((c) => c.id),
+                        description: 'Deleting stale conversations for CallSid before reissuing ConversationRelay',
+                    },
+                    'CUSTOM_ROUTE',
+                );
+            }
             const axiosInstance = (conversationClient as unknown as { axiosInstance: { request: (opts: unknown) => Promise<unknown> } }).axiosInstance;
             await Promise.all(
                 existing.map(async c => {
@@ -113,8 +206,14 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
                             method: 'DELETE',
                         });
                     } catch (err) {
-                        console.warn(
-                            `END-CALL-AND-CREATE-LEAD: failed to delete stale conversation ${c.id}: ${(err as Error).message}`
+                        log.warn(
+                            {
+                                callSid: CallSid,
+                                staleConversationId: c.id,
+                                err: err instanceof Error ? err.message : String(err),
+                                description: 'Failed to delete stale conversation before takeback — proceeding anyway; TAC may reject the new session',
+                            },
+                            'CUSTOM_ROUTE',
                         );
                     }
                 })
@@ -132,9 +231,24 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
                     profileId,
                     process.env.TWILIO_MEMORY_STORE_ID
                 );
+                log.info(
+                    {
+                        callSid: CallSid,
+                        profileId,
+                        traitsPreloaded: Boolean(preloadedTraits),
+                        description: 'Prefetched caller traits for takeback session',
+                    },
+                    'CUSTOM_ROUTE',
+                );
             } catch (err) {
-                console.warn(
-                    `REDIRECT-BACK-TO-AGENT: trait preload failed for ${profileId}: ${(err as Error).message}`
+                log.warn(
+                    {
+                        callSid: CallSid,
+                        profileId,
+                        err: err instanceof Error ? err.message : String(err),
+                        description: 'Trait preload failed — takeback session will fall back to a live Memory API fetch on the first turn',
+                    },
+                    'CUSTOM_ROUTE',
                 );
             }
         }
@@ -171,22 +285,41 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
         );
         await client.calls(CallSid).update({ twiml: takebackTwiml.toString() });
 
+        log.info(
+            {
+                callSid: CallSid,
+                profileId: profileId ?? null,
+                description: 'Takeback ConversationRelay reissued via Calls.update — caller returning to AI agent',
+            },
+            'CUSTOM_ROUTE',
+        );
+
         reply.type('text/xml');
         await reply.send(new Twilio.twiml.VoiceResponse().toString());
 
     });
 
     server.fastify.post('/enqueue-or-end-call', async (request: FastifyRequest, reply: FastifyReply) => {
+        const log = request.log.child({ type: 'session' });
 
-        const { CallStatus, HandoffData:handoffdataString } = request.body as TwilioPayload
+        const { CallSid, CallStatus, HandoffData:handoffdataString } = request.body as TwilioPayload
 
         // The takeback CR fires this action URL when it ends for any reason —
         // not only via TAC handoff. Bail cleanly when there's no HandoffData
         // (e.g., caller hung up).
         if (!handoffdataString) {
-            console.log("ENQUEUE-OR-END-CALL: no HandoffData on request — nothing to enqueue");
+            log.info(
+                {
+                    route: '/enqueue-or-end-call',
+                    callSid: CallSid,
+                    callStatus: CallStatus,
+                    description: 'ConversationRelay ended without HandoffData — caller likely hung up; no enqueue required',
+                },
+                'CUSTOM_ROUTE',
+            );
             reply.type('text/xml');
             await reply.send(new Twilio.twiml.VoiceResponse().toString());
+            await finalizeConversation(tac, log, CallSid, 'caller-hangup');
             return;
         }
 
@@ -196,9 +329,18 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
         // the LLM's farewell.
         const parsed = JSON.parse(handoffdataString) as Partial<HandoffData & EndCallData>;
         if (parsed?.endCall === true) {
-            console.log(`ENQUEUE-OR-END-CALL: end_call requested${parsed.reason ? ` (${parsed.reason})` : ''} — returning empty TwiML`);
+            log.info(
+                {
+                    route: '/enqueue-or-end-call',
+                    callSid: CallSid,
+                    reason: parsed.reason ?? null,
+                    description: 'end_call tool signaled — returning empty TwiML so call hangs up after farewell',
+                },
+                'CUSTOM_ROUTE',
+            );
             reply.type('text/xml');
             await reply.send(new Twilio.twiml.VoiceResponse().toString());
+            await finalizeConversation(tac, log, CallSid, 'end-call-tool');
             return;
         }
 
@@ -218,8 +360,17 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
         taskAttributes.triage_target_friendly_name = 'jhunter@twilio.com'
         taskAttributes.triage_target_friendly_name_secondary = 'jhunter'
 
-        if(CallStatus !== 'in-progress') {
-            console.log("ENQUEUE-OR-END-CALL: " + "FAIL - CALL NOT IN PROGRESS");
+        if (CallStatus !== 'in-progress') {
+            log.warn(
+                {
+                    route: '/enqueue-or-end-call',
+                    callSid: CallSid,
+                    callStatus: CallStatus,
+                    workflowSid: workflow_sid,
+                    description: 'Handoff requested but call is no longer in progress — skipping enqueue',
+                },
+                'CUSTOM_ROUTE',
+            );
             return
         }
 
@@ -231,16 +382,87 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
         const waitUrl = HandoffData.profileId
             ? `/waitUrl?profileId=${encodeURIComponent(HandoffData.profileId)}`
             : '/waitUrl';
+        // `action` fires when Enqueue ends for ANY reason — bridged (agent
+        // picked up), hangup (caller left the queue), queue-full, error, etc.
+        // Without this, a caller hanging up during hold music leaves the CO
+        // conversation open until CO's own timeout kicks in. See
+        // /enqueue-completed handler below for the cleanup logic.
         const enqueue = response.enqueue({
             workflowSid: workflow_sid,
             waitUrl,
+            action: '/enqueue-completed',
         });
         enqueue.task(JSON.stringify(taskAttributes));
 
         reply.type('text/xml');
         await reply.send(response.toString());
-        console.log("ENQUEUE-OR-END-CALL: " + "SUCCESS");
+        log.info(
+            {
+                route: '/enqueue-or-end-call',
+                callSid: CallSid,
+                workflowSid: workflow_sid,
+                conversationId: HandoffData.conversationId,
+                profileId: HandoffData.profileId,
+                triageTarget: taskAttributes.triage_target_friendly_name,
+                triageTargetSecondary: taskAttributes.triage_target_friendly_name_secondary,
+                reason: HandoffData.attributes.reason,
+                description: 'Handoff enqueued to TaskRouter workflow — caller will now sit on the waitUrl until an agent reserves',
+            },
+            'CUSTOM_ROUTE',
+        );
 
+    });
+
+    // Fires when <Enqueue> terminates for any reason. Twilio passes QueueResult
+    // to tell us why: "bridged" (agent picked up — Flex owns lifecycle from
+    // here), "hangup" (caller left the queue), "queue-full", "error",
+    // "redirected", "system-error", "timeout". For everything except "bridged"
+    // we run the same finalizeConversation cleanup used by the caller-hangup
+    // and end_call branches above, so a caller who hangs up during hold music
+    // doesn't leave the CO conversation stranded until CO's own timeout.
+    server.fastify.post('/enqueue-completed', async (request: FastifyRequest, reply: FastifyReply) => {
+        const log = request.log.child({ type: 'session' });
+        const body = request.body as {
+            CallSid?: string;
+            CallStatus?: string;
+            QueueResult?: string;
+            QueueSid?: string;
+            TaskSid?: string;
+            WorkflowSid?: string;
+        };
+        const { CallSid, CallStatus, QueueResult, QueueSid, TaskSid } = body;
+
+        log.info(
+            {
+                route: '/enqueue-completed',
+                callSid: CallSid,
+                callStatus: CallStatus,
+                queueResult: QueueResult,
+                queueSid: QueueSid,
+                taskSid: TaskSid,
+                description: 'Enqueue ended',
+            },
+            'CUSTOM_ROUTE',
+        );
+
+        // Bridged → the caller and an agent are now on a live bridge. The
+        // downstream Flex flow owns the conversation from here (it'll flip CO
+        // back to ACTIVE on pickup and CLOSED on hangup). Do nothing.
+        if (QueueResult === 'bridged') {
+            reply.type('text/xml');
+            await reply.send(new Twilio.twiml.VoiceResponse().toString());
+            return;
+        }
+
+        // Any other QueueResult means the enqueue ended without a live agent
+        // picking up — hangup, timeout, queue-full, error. Clean up.
+        if (CallSid) {
+            await finalizeConversation(tac, log, CallSid, `enqueue-${QueueResult ?? 'unknown'}`);
+        }
+
+        // Return empty TwiML so the call terminates cleanly.
+        reply.type('text/xml');
+        await reply.send(new Twilio.twiml.VoiceResponse().toString());
     });
 }
 

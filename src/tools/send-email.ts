@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { contextLog } from '../logger.js';
 
 /**
  * send_lead_email — provider-agnostic entry point.
@@ -35,8 +36,13 @@ type EmailProvider = 'sendgrid' | 'twilio';
 function resolveProvider(): EmailProvider {
   const raw = (process.env.EMAIL_PROVIDER ?? 'sendgrid').trim().toLowerCase();
   if (raw === 'sendgrid' || raw === 'twilio') return raw;
-  console.warn(
-    `[EMAIL] Unknown EMAIL_PROVIDER "${raw}" — falling back to "sendgrid".`,
+  contextLog().warn(
+    {
+      backend: 'email',
+      configured: raw,
+      description: 'Unknown EMAIL_PROVIDER — falling back to "sendgrid"',
+    },
+    'EMAIL_CONFIG',
   );
   return 'sendgrid';
 }
@@ -245,8 +251,9 @@ async function sendViaSendGrid(email: RenderedEmail): Promise<string> {
     });
 
     if (response.status === 202) {
-      console.log(
-        `[SENDGRID] Sent "${email.subject}" to ${toEmail} (${email.fieldCount} field(s)).`,
+      contextLog().info(
+        { backend: 'sendgrid', to: toEmail, subject: email.subject, fieldCount: email.fieldCount },
+        'EMAIL_SENT',
       );
       return `lead_email_sent: ${JSON.stringify({
         provider: 'sendgrid',
@@ -257,13 +264,28 @@ async function sendViaSendGrid(email: RenderedEmail): Promise<string> {
     }
 
     const errorBody = await response.text();
-    console.error(
-      `[SENDGRID] Send failed: ${response.status} ${response.statusText} — ${errorBody}`,
+    contextLog().error(
+      {
+        backend: 'sendgrid',
+        to: toEmail,
+        status: response.status,
+        statusText: response.statusText,
+        body: errorBody,
+        description: 'SendGrid send failed',
+      },
+      'EMAIL_FAILURE',
     );
     return `Failed to send lead email: ${response.status} ${response.statusText}`;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[SENDGRID] Error sending lead email:', err);
+    contextLog().error(
+      {
+        backend: 'sendgrid',
+        err: message,
+        description: 'Error sending lead email via SendGrid',
+      },
+      'EMAIL_FAILURE',
+    );
     return `Failed to send lead email: ${message}`;
   }
 }
@@ -304,8 +326,9 @@ async function sendViaTwilio(email: RenderedEmail): Promise<string> {
     });
 
     if (response.ok) {
-      console.log(
-        `[TWILIO_EMAIL] Sent "${email.subject}" to ${toAddress} (${email.fieldCount} field(s)).`,
+      contextLog().info(
+        { backend: 'twilio-email', to: toAddress, subject: email.subject, fieldCount: email.fieldCount },
+        'EMAIL_SENT',
       );
       return `lead_email_sent: ${JSON.stringify({
         provider: 'twilio',
@@ -316,13 +339,28 @@ async function sendViaTwilio(email: RenderedEmail): Promise<string> {
     }
 
     const errorBody = await response.text();
-    console.error(
-      `[TWILIO_EMAIL] Send failed: ${response.status} ${response.statusText} — ${errorBody}`,
+    contextLog().error(
+      {
+        backend: 'twilio-email',
+        to: toAddress,
+        status: response.status,
+        statusText: response.statusText,
+        body: errorBody,
+        description: 'Twilio Emails send failed',
+      },
+      'EMAIL_FAILURE',
     );
     return `Failed to send lead email: ${response.status} ${response.statusText}`;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[TWILIO_EMAIL] Error sending lead email:', err);
+    contextLog().error(
+      {
+        backend: 'twilio-email',
+        err: message,
+        description: 'Error sending lead email via Twilio Emails',
+      },
+      'EMAIL_FAILURE',
+    );
     return `Failed to send lead email: ${message}`;
   }
 }

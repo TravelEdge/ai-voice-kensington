@@ -16,6 +16,7 @@ import {
   CREATE_NEW_CLIENT_REQUEST_STUB,
   TMT_LEGACY_AUTH_STUB,
 } from '../stubs/tmt-legacy.js';
+import { contextLog } from '../logger.js';
 
 interface TokenCache {
   accessToken: string;
@@ -71,7 +72,10 @@ export async function authenticate(): Promise<string> {
       accessToken: TMT_LEGACY_AUTH_STUB,
       expiresAt: Date.now() + 60 * 60 * 1000,
     };
-    console.log('[tmt-legacy] STUB: returning dummy bearer token');
+    contextLog().info(
+      { backend: 'tmt-legacy', description: 'Returning dummy bearer token' },
+      'STUBBED_RESPONSE',
+    );
     return TMT_LEGACY_AUTH_STUB;
   }
   const cfg = loadConfig();
@@ -442,7 +446,10 @@ export async function createNewClientRequest<T = unknown>(
   request: CreateNewClientRequest
 ): Promise<T | null> {
   if (isStubMode()) {
-    console.log('[tmt-legacy] STUB: returning stubbed createNewClientRequest response');
+    contextLog().info(
+      { backend: 'tmt-legacy', description: 'Returning stubbed createNewClientRequest response' },
+      'STUBBED_RESPONSE',
+    );
     return CREATE_NEW_CLIENT_REQUEST_STUB as T | null;
   }
   return legacyApiPost<T>('/api/client/clientrequest/createnew', request);

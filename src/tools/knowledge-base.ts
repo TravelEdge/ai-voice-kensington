@@ -3,6 +3,7 @@ import {
   TAC,
   createKnowledgeSearchTool
 } from 'twilio-agent-connect';
+import { serverLog } from '../logger.js';
 
 
 export const createKnowledgeToolFromConfig = (tac: TAC) => {
@@ -23,14 +24,28 @@ export const createKnowledgeToolFromConfig = (tac: TAC) => {
                 }
             );
 
-            // Pass to agent
-            console.log(`[TAC] Created knowledge base tool: ${process.env.TWILIO_KNOWLEDGE_BASE_ID}`);
+            serverLog.info(
+                {
+                    knowledgeBaseId: process.env.TWILIO_KNOWLEDGE_BASE_ID,
+                    description: 'Created knowledge base tool',
+                },
+                'KNOWLEDGE_BASE_INIT',
+            );
             return knowledgeTool;
-        } 
+        }
         else {
-            console.warn('[TAC] Knowledge client not available');
+            serverLog.warn(
+                { description: 'Knowledge client not available on TAC — knowledge tool not created' },
+                'KNOWLEDGE_BASE_INIT',
+            );
         }
     } catch (error) {
-        console.error('[TAC] Failed to create knowledge tool:', error);
+        serverLog.error(
+            {
+                err: error instanceof Error ? error.message : String(error),
+                description: 'Failed to create knowledge tool',
+            },
+            'KNOWLEDGE_BASE_INIT',
+        );
     }
 }

@@ -13,6 +13,7 @@ import {
 } from '../tools/lead-queue.js';
 import { authenticate as tmtLegacyAuthenticate } from '../tools/tmt-legacy.js';
 import { authenticate as tmtProfileAuthenticate } from '../tools/tmt-profile.js';
+import { serverLog, sessionLog } from '../logger.js';
 
 // Per-conversation message history keyed by conversationId
 export const histories = new Map<string, Anthropic.MessageParam[]>();
@@ -35,8 +36,21 @@ class IntentMap extends Map<string, string> {
   setAndLog(key: string, value: string): this {
     const currentValue = super.get(key);
     super.set(key, value);
-    if (!currentValue) console.log(`%cSET INITIAL INTENT: %c${value}`, "color: red;", "color: green;");
-    else console.log(`%cCHANGED INTENT: %c${currentValue} => %c${value}`, "color: red;", "color: blue;", "color: green;")
+    if (!currentValue) {
+      sessionLog(key).info(
+        { intent: value, description: 'Set initial intent' },
+        'INTENT_CHANGE',
+      );
+    } else {
+      sessionLog(key).info(
+        {
+          previousIntent: currentValue,
+          intent: value,
+          description: 'Intent changed',
+        },
+        'INTENT_CHANGE',
+      );
+    }
     return this;
   }
 }
@@ -184,8 +198,15 @@ export async function cacheBackendData(): Promise<void> {
     getAllActivities(),
     getAllChannels(),
   ]);
-  console.log(
-    `[LeadDepo] Cached ${destinations.length} continents, ${activities.length} activities, ${channels.length} channels.`
+  serverLog.info(
+    {
+      backend: 'LeadDepo',
+      continents: destinations.length,
+      activities: activities.length,
+      channels: channels.length,
+      description: 'Cached LeadDepo entity data',
+    },
+    'BACKEND_CACHED',
   );
 
   // Pre-cache TMT bearer tokens. Non-fatal — TMT service-account credentials
@@ -193,18 +214,36 @@ export async function cacheBackendData(): Promise<void> {
   // not block the rest of the server from starting.
   await Promise.all([
     tmtLegacyAuthenticate().then(
-      () => console.log('[tmt-legacy] Cached bearer token.'),
+      () =>
+        serverLog.info(
+          { backend: 'tmt-legacy', description: 'Cached bearer token' },
+          'BACKEND_CACHED',
+        ),
       (err: unknown) =>
-        console.warn(
-          `[tmt-legacy] Startup auth skipped: ${err instanceof Error ? err.message : String(err)}`
-        )
+        serverLog.warn(
+          {
+            backend: 'tmt-legacy',
+            err: err instanceof Error ? err.message : String(err),
+            description: 'Startup auth skipped',
+          },
+          'BACKEND_AUTH_SKIPPED',
+        ),
     ),
     tmtProfileAuthenticate().then(
-      () => console.log('[tmt-profile] Cached bearer token.'),
+      () =>
+        serverLog.info(
+          { backend: 'tmt-profile', description: 'Cached bearer token' },
+          'BACKEND_CACHED',
+        ),
       (err: unknown) =>
-        console.warn(
-          `[tmt-profile] Startup auth skipped: ${err instanceof Error ? err.message : String(err)}`
-        )
+        serverLog.warn(
+          {
+            backend: 'tmt-profile',
+            err: err instanceof Error ? err.message : String(err),
+            description: 'Startup auth skipped',
+          },
+          'BACKEND_AUTH_SKIPPED',
+        ),
     ),
   ]);
 }

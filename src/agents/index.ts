@@ -7,7 +7,7 @@ import {
   type ConversationId,
 } from 'twilio-agent-connect';
 
-import { getAllTools, executeTool, extractCustomerProfileId, getProfileTraitsForPrompt } from '../tools/index.js';
+import { executeTool, extractCustomerProfileId, getProfileTraitsForPrompt } from '../tools/index.js';
 import { executeHandoff } from '../tools/handoff.js';
 import { AGENTS, AGENT_NAMES, preparePrompt } from './prompts.js';
 import {
@@ -20,6 +20,16 @@ import {
   consumePreloadedTraits,
   purgeConversation,
 } from '../cache/index.js';
+import {
+  runInSession,
+  sessionLog,
+  getSessionStore,
+  isLogEnabled,
+  registerSessionCallSid,
+  purgeSessionState,
+  deepAutoParse,
+  type ClaudeApiCall,
+} from '../logger.js';
 
 let claude: Anthropic | undefined;
 
@@ -29,22 +39,69 @@ const DEFAULT_FALLBACK_LIVE_ANSWER_MESSAGE =
   "I'm sorry, I'm having difficulty reaching critical services. " +
   "I'm going to connect you to a live agent who will direct you to the correct specialist.";
 
+// Build the "recorded call" object for the aggregate AGENT_RESPONSE log. When
+// CLAUDE_API_PAYLOAD is enabled, includes the full request payload; otherwise
+// falls back to a cheap { model, lastMessage } shape. deepAutoParse unwraps
+// stringified JSON that tool_result blocks carry as `content` strings, so the
+// pretty-printer renders the structure instead of an escaped one-liner.
+function recordClaudeCall(
+  params: Anthropic.MessageCreateParamsNonStreaming,
+  requestTime: number,
+): void {
+  const store = getSessionStore();
+  if (!store) return;
+  const messages = params.messages;
+  const includeFull = isLogEnabled('CLAUDE_API_PAYLOAD');
+  const call: ClaudeApiCall = includeFull
+    ? {
+        model: params.model,
+        max_tokens: params.max_tokens,
+        system: params.system,
+        messages: deepAutoParse(params.messages) as unknown,
+        tools: params.tools,
+        requestTime,
+      }
+    : {
+        model: params.model,
+        lastMessage: deepAutoParse(messages[messages.length - 1]),
+        requestTime,
+      };
+  store.claudeApiCalls.push(call);
+
+  if (isLogEnabled('CLAUDE_API')) {
+    sessionLog().info(call, 'CLAUDE_API');
+  }
+}
+
 // Single retry with a short pause. Voice is real-time, so backoff is minimal —
 // if the second attempt fails, the outer handler falls back to a live-agent
 // handoff. Retries on any error (503, network, timeout, etc.) since we're
 // going to fall back anyway if the second attempt fails.
 async function callClaudeWithRetry(
-  params: Anthropic.MessageCreateParamsNonStreaming
+  params: Anthropic.MessageCreateParamsNonStreaming,
 ): Promise<Anthropic.Message> {
   claude ??= new Anthropic();
+  const attempt = async (): Promise<Anthropic.Message> => {
+    const start = performance.now();
+    const result = await claude!.messages.create(params);
+    recordClaudeCall(params, Math.round(performance.now() - start));
+    return result;
+  };
+
   try {
-    return await claude.messages.create(params);
+    return await attempt();
   } catch (err) {
-    console.warn(
-      `[CLAUDE] first attempt failed, retrying once: ${err instanceof Error ? err.message : String(err)}`
-    );
+    if (isLogEnabled('FALLBACK')) {
+      sessionLog().warn(
+        {
+          err: err instanceof Error ? err.message : String(err),
+          description: 'Claude first attempt failed, retrying once',
+        },
+        'CLAUDE_RETRY',
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 300));
-    return await claude.messages.create(params);
+    return attempt();
   }
 }
 
@@ -57,11 +114,17 @@ async function fallbackToLiveAgent(
   tac: TAC,
   session: ConversationSession,
   history: Anthropic.MessageParam[],
-  err: unknown
+  err: unknown,
 ): Promise<string> {
-  console.error(
-    `[CLAUDE FAILURE] Both attempts failed, initiating fallback handoff: ${err instanceof Error ? err.message : String(err)}`
-  );
+  if (isLogEnabled('FALLBACK')) {
+    sessionLog().error(
+      {
+        err: err instanceof Error ? err.message : String(err),
+        description: 'Both Claude attempts failed — initiating fallback handoff',
+      },
+      'CLAUDE_FAILURE',
+    );
+  }
 
   const workflowSid = process.env.HANDOFF_LIVE_ANSWER_WORKFLOW_SID;
   const fallbackMessage =
@@ -75,16 +138,21 @@ async function fallbackToLiveAgent(
           reason: 'AI backend failure — automatic fallback to live agent',
         },
         tac,
-        session
+        session,
       );
     } catch (handoffErr) {
-      console.error(
-        `[CLAUDE FAILURE] Fallback handoff also failed: ${handoffErr instanceof Error ? handoffErr.message : String(handoffErr)}`
+      sessionLog().error(
+        {
+          err: handoffErr instanceof Error ? handoffErr.message : String(handoffErr),
+          description: 'Fallback handoff itself failed',
+        },
+        'CLAUDE_FAILURE',
       );
     }
   } else {
-    console.error(
-      '[CLAUDE FAILURE] HANDOFF_LIVE_ANSWER_WORKFLOW_SID not set — cannot initiate fallback handoff'
+    sessionLog().error(
+      { description: 'HANDOFF_LIVE_ANSWER_WORKFLOW_SID not set — cannot initiate fallback handoff' },
+      'CLAUDE_FAILURE',
     );
   }
 
@@ -94,18 +162,68 @@ async function fallbackToLiveAgent(
   return fallbackMessage;
 }
 
-export async function handleMessage(tac: TAC, params: {
-  conversationId: ConversationId;
-  message: string;
-  session: ConversationSession;
-}): Promise<string> {
+// Tool return values are strings by contract — many are pure JSON, some are
+// "prefix: {json}" markers. deepAutoParse handles both, and recurses into any
+// embedded structures so pino-pretty renders them as trees instead of
+// escaped-newline blobs.
 
+// Public entry point. Establishes the AsyncLocalStorage session context (one
+// per top-level customer utterance) and emits the aggregate AGENT_RESPONSE log
+// with timings once the recursive worker returns. Recursive re-entry from
+// intent detection or CHANGE_INTENT uses handleMessageInternal directly so
+// timings accumulate into a single AGENT_RESPONSE record.
+export async function handleMessage(
+  tac: TAC,
+  params: {
+    conversationId: ConversationId;
+    message: string;
+    session: ConversationSession;
+  },
+): Promise<string> {
   const { conversationId, message, session } = params;
-
-  console.log("%cCUSTOMER INPUT: " + "%c" + message, "color: white;", "color: green;");
   const convId = String(conversationId);
 
-   // initilaize conversation history in local array if it doesnt already exist
+  // Resolve the CallSid up front so every log inside this turn carries it as
+  // a first-class binding, and so onInterrupt (which fires outside our ALS
+  // scope) can look it up via the sessionCallSids side-map.
+  const callSid = session.channel === 'voice' ? resolveCallSid(session) : undefined;
+  registerSessionCallSid(convId, callSid);
+
+  return runInSession(convId, callSid, async () => {
+    if (isLogEnabled('CUSTOMER_INPUT')) {
+      sessionLog().info({ input: message }, 'CUSTOMER_INPUT');
+    }
+
+    const response = await handleMessageInternal(tac, params);
+
+    if (isLogEnabled('AGENT_RESPONSE')) {
+      const store = getSessionStore()!;
+      sessionLog().info(
+        {
+          response,
+          customerToAgentResponseTime: Math.round(performance.now() - store.startedAt),
+          claudeApiResponseTimes: store.claudeApiCalls,
+        },
+        'AGENT_RESPONSE',
+      );
+    }
+
+    return response;
+  });
+}
+
+async function handleMessageInternal(
+  tac: TAC,
+  params: {
+    conversationId: ConversationId;
+    message: string;
+    session: ConversationSession;
+  },
+): Promise<string> {
+  const { conversationId, message, session } = params;
+  const convId = String(conversationId);
+
+  // initilaize conversation history in local array if it doesnt already exist
   if (!histories.has(convId)) histories.set(convId, []);
   if (!intents.has(convId)) {
     // If this session was reconnected via the takeback flow (see
@@ -161,7 +279,7 @@ export async function handleMessage(tac: TAC, params: {
   }
 
   // generate the prompt for the relevant agent
-  const systemPrompt = await preparePrompt(intent, session, AGENTS[intent].prompt, traitsContext)
+  const systemPrompt = await preparePrompt(intent, session, AGENTS[intent].prompt, traitsContext);
 
   try {
     let response = await callClaudeWithRetry({
@@ -177,26 +295,21 @@ export async function handleMessage(tac: TAC, params: {
       .map((b) => b.text)
       .join('');
 
-    if (intent === "INTENT_DETECTION"){
+    if (intent === "INTENT_DETECTION") {
 
-      if(Object.values(AGENT_NAMES).includes(reply as AGENT_NAMES)) {
+      if (Object.values(AGENT_NAMES).includes(reply as AGENT_NAMES)) {
         intents.setAndLog(convId, reply);
-        return handleMessage(tac, { conversationId, message, session })
+        return handleMessageInternal(tac, { conversationId, message, session });
       } else {
         history.push({ role: 'assistant', content: reply });
         return reply;
       }
 
 
-    } else if (reply === "CHANGE_INTENT"){
+    } else if (reply === "CHANGE_INTENT") {
       intents.setAndLog(convId, "INTENT_DETECTION");
-      return handleMessage(tac, { conversationId, message, session })
+      return handleMessageInternal(tac, { conversationId, message, session });
     } else {
-
-      const { content } = response;
-      content.forEach((value, index) => {
-        if (value.type === "text") console.log(`%cCLAUDE RESPONSE[${index}]: %c` + value.text, "color: blue;", "color: green;")
-      })
 
       // Handle tool calls (agentic loop)
       while (response.stop_reason === 'tool_use') {
@@ -213,23 +326,35 @@ export async function handleMessage(tac: TAC, params: {
         // Execute all tool calls and collect results
         const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
           toolUseBlocks.map(async (toolUse) => {
-            console.log(`[TOOL_CALL] ${toolUse.name} with input:`, toolUse.input);
+            if (isLogEnabled('TOOLS_CALL')) {
+              sessionLog().info(
+                { tool: toolUse.name, input: toolUse.input },
+                'TOOL_CALL',
+              );
+            }
+            const toolStart = performance.now();
             const result = await executeTool(
               toolUse.name,
               toolUse.input as Record<string, unknown>,
               tac,
               { profileId, memorySid, callSid },
               session,
-              undefined
+              undefined,
             );
-            console.log(`[TOOL_RESULT] ${toolUse.name}:`, result.substring(0, 200) + '...');
+            const requestTime = Math.round(performance.now() - toolStart);
+            if (isLogEnabled('TOOLS_RESULT')) {
+              sessionLog().info(
+                { tool: toolUse.name, requestTime, result: deepAutoParse(result) },
+                'TOOL_RESULT',
+              );
+            }
 
             return {
               type: 'tool_result',
               tool_use_id: toolUse.id,
               content: result,
             };
-          })
+          }),
         );
 
         // Add tool results to history
@@ -267,12 +392,37 @@ export async function handleMessage(tac: TAC, params: {
   }
 }
 
+// TAC-facing entry point: fires from tac.onConversationEnded when Conversation
+// Orchestrator posts a CLOSED webhook back to TAC. In the current deployment
+// this pathway is not guaranteed to fire for every hang-up (CO closes on its
+// own schedule / relies on downstream to CLOSE), so the /enqueue-or-end-call
+// route also calls clearConversationById directly as a belt-and-braces cleanup.
 export function clearConversation(session: ConversationSession): void {
   const convId = String(session.conversationId);
   const from = session.authorInfo?.address;
+  clearConversationById(convId, from);
+}
 
-  // PRINT Conversation on hangup
-  console.log(JSON.stringify(histories.get(convId), null, 4));
+// Direct cleanup path for callers that only have a conversationId + optional
+// caller address (e.g. HTTP route handlers). Idempotent — safe to call twice
+// on the same conversation because purgeConversation / purgeSessionState use
+// Map.delete, which is a no-op for missing keys.
+export function clearConversationById(convId: string, from: string | undefined): void {
+  const history = histories.get(convId);
+  const alreadyPurged = !history && !intents.has(convId);
+
+  // Teardown: one info-level marker for lifecycle visibility, plus the full
+  // transcript at debug level for post-mortems without polluting normal logs.
+  // Skip if the state has already been purged so a duplicate hangup callback
+  // doesn't emit a phantom teardown log.
+  if (!alreadyPurged && isLogEnabled('CONVERSATION_LIFECYCLE')) {
+    sessionLog(convId).info(
+      { from, historyLength: history?.length ?? 0 },
+      'CONVERSATION_ENDED',
+    );
+    sessionLog(convId).debug({ history }, 'CONVERSATION_TRANSCRIPT');
+  }
 
   purgeConversation(convId, from);
+  purgeSessionState(convId);
 }

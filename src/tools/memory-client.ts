@@ -6,6 +6,7 @@ import {
   type ConversationSession,
   type ConversationId,
 } from 'twilio-agent-connect';
+import { contextLog } from '../logger.js';
 
 /**
  * Twilio Conversation Memory API Client
@@ -65,16 +66,19 @@ export async function getProfile(
   const authToken = process.env.TWILIO_AUTH_TOKEN;
 
   if (!accountSid || !authToken) {
-    console.error("[MEMORY] Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN");
+    contextLog().error(
+      {
+        backend: 'ConversationMemory',
+        description: 'Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN — cannot fetch profile',
+      },
+      'MEMORY_ERROR',
+    );
     return null;
   }
 
   try {
     const url = `${MEMORY_API_BASE}/Stores/${memorySid}/Profiles/${profileId}`;
     const auth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
-    console.log(
-      `[MEMORY] Fetching profile ${profileId} from memory store ${memorySid}...`,
-    );
     const response = await fetch(url, {
       method: "GET",
       headers: {
@@ -84,17 +88,32 @@ export async function getProfile(
     });
 
     if (!response.ok) {
-      console.error(
-        `[MEMORY] Failed to fetch profile: ${response.status} ${response.statusText}`,
+      contextLog().error(
+        {
+          backend: 'ConversationMemory',
+          profileId,
+          memorySid,
+          status: response.status,
+          statusText: response.statusText,
+          description: 'Failed to fetch profile',
+        },
+        'MEMORY_ERROR',
       );
       return null;
     }
 
-    const profile = (await response.json()) as Profile;
-    console.log("PROFILE: ", profile);
-    return profile;
+    return (await response.json()) as Profile;
   } catch (error) {
-    console.error("[MEMORY] Error fetching profile:", error);
+    contextLog().error(
+      {
+        backend: 'ConversationMemory',
+        profileId,
+        memorySid,
+        err: error instanceof Error ? error.message : String(error),
+        description: 'Error fetching profile',
+      },
+      'MEMORY_ERROR',
+    );
     return null;
   }
 }
@@ -111,7 +130,13 @@ export async function lookupProfile(
   const authToken = process.env.TWILIO_AUTH_TOKEN;
 
   if (!accountSid || !authToken) {
-    console.error("[MEMORY] Missing credentials");
+    contextLog().error(
+      {
+        backend: 'ConversationMemory',
+        description: 'Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN — cannot look up profile',
+      },
+      'MEMORY_ERROR',
+    );
     return null;
   }
 
@@ -129,14 +154,30 @@ export async function lookupProfile(
     });
 
     if (!response.ok) {
-      console.error(`[MEMORY] Profile lookup failed: ${response.status}`);
+      contextLog().error(
+        {
+          backend: 'ConversationMemory',
+          idType,
+          status: response.status,
+          description: 'Profile lookup failed',
+        },
+        'MEMORY_ERROR',
+      );
       return null;
     }
 
     const result = (await response.json()) as ProfileLookupResponse;
     return result.profiles[0] ?? null;
   } catch (error) {
-    console.error("[MEMORY] Error looking up profile:", error);
+    contextLog().error(
+      {
+        backend: 'ConversationMemory',
+        idType,
+        err: error instanceof Error ? error.message : String(error),
+        description: 'Error looking up profile',
+      },
+      'MEMORY_ERROR',
+    );
     return null;
   }
 }
@@ -165,24 +206,22 @@ export function formatTraitsForPrompt(traits: ProfileTraits): string {
 export async function getProfileTraitsForPrompt(profileId: string | undefined, memorySid: string | undefined): Promise<string | undefined> {
 
   if (profileId && memorySid) {
-    console.log(`[MEMORY] Fetching traits for profile: ${profileId}`);
-
     const profile = await getProfile(memorySid, profileId);
 
     if (profile?.traits && Object.keys(profile.traits).length > 0) {
-      const traitsContext = `\n\nCustomer Profile:\n${formatTraitsForPrompt(profile.traits)}`;
-      console.log(`[MEMORY] Loaded ${Object.keys(profile.traits).length} trait group(s) for profile ${profileId}`);
-      return traitsContext;
-    } else {
-      console.log('[MEMORY] No traits found for profile');
+      return `\n\nCustomer Profile:\n${formatTraitsForPrompt(profile.traits)}`;
     }
-  } else if (!profileId) {
-    console.log('[MEMORY] No customer profile ID found in memory response');
   } else if (!memorySid) {
-    console.log('[MEMORY] TWILIO_MEMORY_STORE_ID not configured');
+    contextLog().warn(
+      {
+        backend: 'ConversationMemory',
+        description: 'TWILIO_MEMORY_STORE_ID not configured — trait lookup skipped',
+      },
+      'MEMORY_CONFIG',
+    );
   }
 
-  return
+  return;
 }
 
 /**
@@ -197,18 +236,19 @@ export async function updateProfileTraits(
   const authToken = process.env.TWILIO_AUTH_TOKEN;
 
   if (!accountSid || !authToken) {
-    console.error("[MEMORY] Missing credentials");
+    contextLog().error(
+      {
+        backend: 'ConversationMemory',
+        description: 'Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN — cannot update traits',
+      },
+      'MEMORY_ERROR',
+    );
     return false;
   }
 
   try {
     const url = `${MEMORY_API_BASE}/Stores/${memorySid}/Profiles/${profileId}`;
     const auth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
-
-    console.log(
-      `[MEMORY] Updating traits for profile ${profileId} in memory store ${memorySid}...`,
-    );
-    console.log("New traits:", JSON.stringify({ traits }));
 
     const response = await fetch(url, {
       method: "PATCH",
@@ -222,21 +262,33 @@ export async function updateProfileTraits(
     // API returns 202 Accepted for async processing
     if (response.status !== 202 && !response.ok) {
       const errorBody = await response.text();
-      console.error(
-        `[MEMORY] Failed to update traits: ${response.status} ${response.statusText}`,
+      contextLog().error(
+        {
+          backend: 'ConversationMemory',
+          profileId,
+          memorySid,
+          status: response.status,
+          statusText: response.statusText,
+          body: errorBody,
+          description: 'Failed to update traits',
+        },
+        'MEMORY_ERROR',
       );
-      console.error(`[MEMORY] Error details: ${errorBody}`);
       return false;
     }
 
-    const result = await response.json();
-    console.log(
-      `[MEMORY] Successfully submitted trait update for profile ${profileId}`,
-    );
-    console.log(`[MEMORY] Response:`, result);
     return true;
   } catch (error) {
-    console.error("[MEMORY] Error updating traits:", error);
+    contextLog().error(
+      {
+        backend: 'ConversationMemory',
+        profileId,
+        memorySid,
+        err: error instanceof Error ? error.message : String(error),
+        description: 'Error updating traits',
+      },
+      'MEMORY_ERROR',
+    );
     return false;
   }
 }
@@ -315,7 +367,14 @@ export const executeUpdateNewLeadTraits = async (
     memory = await tac.retrieveMemory(session);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[MEMORY] Failed to retrieve memory for trait update:', err);
+    contextLog().error(
+      {
+        backend: 'ConversationMemory',
+        err: err instanceof Error ? err.message : String(err),
+        description: 'Failed to retrieve memory for trait update',
+      },
+      'MEMORY_ERROR',
+    );
     return `Error: failed to load memory for profile lookup: ${message}`;
   }
 

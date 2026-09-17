@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ConversationSession, PendingHandoffData } from 'twilio-agent-connect';
+import { sessionLog, isLogEnabled } from '../logger.js';
 
 /**
  * Anthropic tool declaration for `end_call`. Signals that the active
@@ -56,6 +57,11 @@ export const executeEndCall = async (
   };
   session.pendingHandoffData = pending;
 
-  console.log(`[END_CALL] scheduled end for conversation ${session.conversationId}${reason ? ` (${reason})` : ''}`);
+  if (isLogEnabled('HANDOFF_LIFECYCLE')) {
+    sessionLog(String(session.conversationId)).info(
+      { reason: reason ?? null },
+      'END_CALL_SCHEDULED',
+    );
+  }
   return 'end_call_initiated';
 };
