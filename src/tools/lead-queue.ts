@@ -1,3 +1,6 @@
+import { promises as fs } from 'fs';
+import path from 'path';
+
 import Anthropic from '@anthropic-ai/sdk';
 import { isStubMode } from '../stubs/index.js';
 import {
@@ -7,6 +10,34 @@ import {
   LEAD_ASSIGNMENT_QUEUE_STUB,
   LEAD_QUEUE_AUTH_STUB,
 } from '../stubs/lead-queue.js';
+
+// Response logging destination for get_lead_assignment_queue. Colocated with
+// the canned stubs so recorded live responses can be lifted straight into
+// LEAD_ASSIGNMENT_QUEUE_STUB later. Resolved against process.cwd() so it lands
+// in the source tree whether we're running via tsx (src/) or compiled JS.
+const LEAD_ASSIGNMENT_LOG_DIR = path.resolve(
+  'src/stubs/get_lead_queue_assignment_log'
+);
+
+const shouldLogLeadAssignmentResponse = (): boolean =>
+  process.env.USE_API_STUBS?.toLowerCase() !== 'true' &&
+  process.env.LOG_API_RESPONSES?.toLowerCase() === 'true';
+
+async function logLeadAssignmentQueueResponse(response: string): Promise<void> {
+  if (!shouldLogLeadAssignmentResponse()) return;
+  try {
+    await fs.mkdir(LEAD_ASSIGNMENT_LOG_DIR, { recursive: true });
+    // Colons are illegal in Windows filenames and awkward on macOS Finder; the
+    // rest of the ISO string is safe as-is.
+    const timestamp = new Date().toISOString().replace(/:/g, '-');
+    const filePath = path.join(LEAD_ASSIGNMENT_LOG_DIR, `${timestamp}.json`);
+    await fs.writeFile(filePath, response, 'utf8');
+  } catch (err) {
+    console.warn(
+      `[lead-queue] Failed to log API response: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
 
 // LeadDepo — client for the LeadQueue API (Auth0 M2M bearer + reference data + queue lookup).
 // See LeadQueue-API-Consumer-Guide_2.md at the repo root for endpoint contracts.
@@ -376,10 +407,12 @@ export const GET_LEAD_ASSIGNMENT_QUEUE: Anthropic.Tool = {
         }) as unknown as Array<LeadAssignmentQueueResult>
 
         const response = JSON.stringify(results, null, 2);
-        
+
         if(results?.[0]?.selectedAdvisor) console.log("GET LEAD ASSIGNMENT RESULT: " + JSON.stringify(results?.[0].selectedAdvisor));
         else console.log("GET LEAD ASSIGNMENT RESULT: " + "No selected advisor");
-        
+
+        await logLeadAssignmentQueueResponse(response);
+
         return response;
       } catch (err) {
         return `Error fetching lead assignment queue: ${err instanceof Error ? err.message : String(err)}`;

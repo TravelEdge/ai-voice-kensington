@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import Twilio from 'twilio';
 import { TAC, TACServer } from 'twilio-agent-connect';
 
+import { getProfileTraitsForPrompt } from '../tools/memory-client.js';
+
 interface TwilioPayload {
     "Called": string
     "ToState": string
@@ -42,7 +44,9 @@ interface HandoffData {
     storeId: string,
     profileId: string,
     attributes: {
-        triage_target_friendly_name: string
+        workflow_sid: string,
+        triage_target_friendly_name?: string,
+        triage_target_friendly_name_secondary?: string,
         reason: string,
     }
 }
@@ -61,16 +65,24 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
     // Layer the custom routes onto the same Fastify instance TAC provides.
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     await server.fastify.register(fastifyStatic, {
-    root: path.join(__dirname, '..', 'public'),
-    prefix: '/',
+        root: path.join(__dirname, '..', 'public'),
+        prefix: '/',
     });
 
     server.fastify.post('/waitUrl', async (request: FastifyRequest, reply: FastifyReply) => {
 
         console.log("WAIT URL: hit wait url")
+        // profileId hitchhikes on the query string from /enqueue-or-end-call so
+        // /redirect-back-to-agent can prefetch traits without needing to look up
+        // the task. This is Twilio-agnostic — no reliance on TaskAttributes
+        // being echoed back in the waitUrl POST body.
+        const { profileId } = (request.query ?? {}) as { profileId?: string };
         const response = new Twilio.twiml.VoiceResponse();
-        response.play("https://amber-pig-5530.twil.io/assets/DefaultMusic30s.wav");
-        response.redirect({ method: 'POST' }, '/redirect-back-to-agent');
+        response.play("https://amber-pig-5530.twil.io/assets/DefaultMusic60s.wav");
+        const redirectTarget = profileId
+            ? `/redirect-back-to-agent?profileId=${encodeURIComponent(profileId)}`
+            : '/redirect-back-to-agent';
+        response.redirect({ method: 'POST' }, redirectTarget);
         reply.type('text/xml');
         await reply.send(response.toString());
 
@@ -79,6 +91,7 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
     server.fastify.post('/redirect-back-to-agent', async (request: FastifyRequest, reply: FastifyReply) => {
 
         const { CallSid } = request.body as TwilioPayload;
+        const { profileId } = (request.query ?? {}) as { profileId?: string };
         console.log("END-CALL-AND-CREATE-LEAD: hit for CallSid " + CallSid);
 
         // Delete any conversation already grouped under this CallSid before we
@@ -108,6 +121,24 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
             );
         }
 
+        // Prefetch the caller's NewLead traits so STACK_CALL's first turn can
+        // skip the Memory API round-trip. Wrapped in try/catch — a failure here
+        // is non-fatal: the existing STACK_CALL branch falls back to the API on
+        // its own if the preloaded traits aren't in the cache.
+        let preloadedTraits: string | undefined;
+        if (profileId) {
+            try {
+                preloadedTraits = await getProfileTraitsForPrompt(
+                    profileId,
+                    process.env.TWILIO_MEMORY_STORE_ID
+                );
+            } catch (err) {
+                console.warn(
+                    `REDIRECT-BACK-TO-AGENT: trait preload failed for ${profileId}: ${(err as Error).message}`
+                );
+            }
+        }
+
         const domain = process.env.TWILIO_VOICE_PUBLIC_DOMAIN;
         const takebackTwiml = new Twilio.twiml.VoiceResponse();
         const connect = takebackTwiml.connect({
@@ -115,12 +146,21 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
         });
 
         const relay = connect.conversationRelay({
-            welcomeGreeting: "I apologize, it appears the agent i tried to transfer you to is not available, can i ask you a few more questions so i can pass along your infromation and have them call you back?",
+            welcomeGreeting: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_WELCOME_GREETING,
             url: `wss://${domain}/ws`,
+            actionUrl: `https://${process.env.TWILIO_VOICE_PUBLIC_DOMAIN}/enqueue-or-end-call`,
             conversationConfiguration: process.env.TWILIO_CONVERSATION_CONFIGURATION_ID,
-            speechTimeout: 'auto',
+            speechTimeout: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_SPEECH_TIMEOUT,
+            voice: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_VOICE,
         } as never);
         relay.parameter({ name: 'takeback', value: 'true' });
+        if (preloadedTraits) {
+            // Passed via CR <Parameter> (not stashed server-side) so the value
+            // rides the WS setup to whichever instance owns the new session —
+            // avoids the multi-instance affinity problem we'd have if we cached
+            // it here on the /redirect-back-to-agent instance.
+            relay.parameter({ name: 'traits', value: preloadedTraits });
+        }
 
         const client = Twilio(
             process.env.TWILIO_ACCOUNT_SID,
@@ -160,13 +200,20 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
         }
 
         const HandoffData = parsed as HandoffData;
+
+        // workflow_sid drives the enqueue destination but should NOT leak into
+        // the TaskRouter task's own attributes — split it out here.
+        const { workflow_sid, ...restAttributes } = HandoffData.attributes;
         const taskAttributes = {
             conversationId: HandoffData.conversationId,
             storeId: HandoffData.storeId,
             profileId: HandoffData.profileId,
-            ...HandoffData.attributes }
+            ...restAttributes,
+        }
 
-            taskAttributes.triage_target_friendly_name = 'jhunter@twilio.com'
+        //TODO REMOVE HARDCODED TARGET
+        taskAttributes.triage_target_friendly_name = 'jhunter@twilio.com'
+        taskAttributes.triage_target_friendly_name_secondary = 'jhunter'
 
         if(CallStatus !== 'in-progress') {
             console.log("ENQUEUE-OR-END-CALL: " + "FAIL - CALL NOT IN PROGRESS");
@@ -175,9 +222,15 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
 
         const response = new Twilio.twiml.VoiceResponse();
 
+        // Pin profileId onto the waitUrl so /waitUrl → /redirect-back-to-agent
+        // can carry it forward and prefetch the caller's traits before the CR
+        // session resumes. Empty profileId → skip the query param entirely.
+        const waitUrl = HandoffData.profileId
+            ? `/waitUrl?profileId=${encodeURIComponent(HandoffData.profileId)}`
+            : '/waitUrl';
         const enqueue = response.enqueue({
-            workflowSid: `${process.env.HANDOFF_WORKFLOW_SID}`,
-            waitUrl: '/waitUrl'
+            workflowSid: workflow_sid,
+            waitUrl,
         });
         enqueue.task(JSON.stringify(taskAttributes));
 

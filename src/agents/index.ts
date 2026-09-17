@@ -2,100 +2,25 @@ import Anthropic from '@anthropic-ai/sdk';
 
 import {
   TAC,
-  MemoryPromptBuilder,
   type TACMemoryResponse,
   type ConversationSession,
   type ConversationId,
 } from 'twilio-agent-connect';
 
-import { TOOLS, getAllTools, executeTool, extractCustomerProfileId, getProfileTraitsForPrompt } from '../tools/index.js';
+import { getAllTools, executeTool, extractCustomerProfileId, getProfileTraitsForPrompt } from '../tools/index.js';
 import { AGENTS, AGENT_NAMES, preparePrompt } from './prompts.js';
+import {
+  histories,
+  memoryCache,
+  traitsCache,
+  intents,
+  resolveCallSid,
+  resolveCustomParams,
+  consumePreloadedTraits,
+  purgeConversation,
+} from '../cache/index.js';
 
 let claude: Anthropic | undefined;
-
-
-// Per-conversation message history keyed by conversationId
-const histories = new Map<string, Anthropic.MessageParam[]>();
-// Per-conversation memory cache
-// we dont want to load memory by default for any calls
-// only explicitly when about to handoff for a new lead
-// so we can save the new lead data (we never care about its presence)
-// and when we have a call returned from a handoff, so we can use that data
-const memoryCache =  new Map<string, TACMemoryResponse>();
-// Per-conversation cache of the formatted NewLead traits string. STACK_CALL
-// needs those traits injected into the system prompt on every turn — caching
-// avoids a round-trip to the Memory API each time the caller speaks.
-const traitsCache = new Map<string, string>();
-
-// extend the operations on Map so we can neatly log
-// intent changes
-class IntentMap extends Map<string, string> {
-  setAndLog(key: string, value: string): this {
-    const currentValue = super.get(key);
-    super.set(key, value);
-    if (!currentValue) console.log(`%cSET INITIAL INTENT: %c${value}`, "color: red;", "color: green;");
-    else console.log(`%cCHANGED INTENT: %c${currentValue} => %c${value}`, "color: red;", "color: blue;", "color: green;")
-    return this;
-  }
-}
-
-// initialize a new intent map on startup
-const intents = new IntentMap()
-
-// CallSid captured on ConversationRelay setup, keyed by the caller's address.
-// The voice channel exposes callSid on setup (before the conversation is
-// initialized) and provides authorInfo.address on the first prompt, so we join
-// on the caller's address to move it onto session.metadata.callSid.
-const pendingCallSidByFrom = new Map<string, string>();
-
-// ConversationRelay <Parameter> values captured on setup, keyed by from. Used
-// to signal takeback flows into handleMessage before the first user prompt.
-const pendingCustomParamsByFrom = new Map<string, Record<string, unknown>>();
-
-export function registerPendingCallSid(from: string, callSid: string): void {
-  pendingCallSidByFrom.set(from, callSid);
-}
-
-export function registerPendingCustomParams(
-  from: string,
-  params: Record<string, unknown> | undefined
-): void {
-  if (params && Object.keys(params).length > 0) pendingCustomParamsByFrom.set(from, params);
-}
-
-const resolveCallSid = (session: ConversationSession): string | undefined => {
-  const existing = session.metadata?.callSid;
-  if (typeof existing === 'string' && existing.length > 0) return existing;
-
-  const from = session.authorInfo?.address;
-  if (!from) return undefined;
-
-  const callSid = pendingCallSidByFrom.get(from);
-  if (!callSid) return undefined;
-
-  if (!session.metadata) session.metadata = {};
-  session.metadata.callSid = callSid;
-  pendingCallSidByFrom.delete(from);
-  return callSid;
-};
-
-const resolveCustomParams = (
-  session: ConversationSession
-): Record<string, unknown> | undefined => {
-  const existing = session.metadata?.customParameters;
-  if (existing && typeof existing === 'object') return existing as Record<string, unknown>;
-
-  const from = session.authorInfo?.address;
-  if (!from) return undefined;
-
-  const params = pendingCustomParamsByFrom.get(from);
-  if (!params) return undefined;
-
-  if (!session.metadata) session.metadata = {};
-  session.metadata.customParameters = params;
-  pendingCustomParamsByFrom.delete(from);
-  return params;
-};
 
 export async function handleMessage(tac: TAC, params: {
   conversationId: ConversationId;
@@ -120,6 +45,14 @@ export async function handleMessage(tac: TAC, params: {
     if (takeback === 'true' || takeback === true) {
       intents.setAndLog(convId, "STACK_CALL");
       memoryCache.set(convId, await tac.retrieveMemory(session));
+
+      // If /redirect-back-to-agent prefetched the caller's traits and TAC
+      // handed them to us via CR <Parameter> at setup, promote the value into
+      // the conversation-scoped traitsCache now. The STACK_CALL branch below
+      // reads traitsCache first, so this turn skips the Memory API round-trip.
+      const fromAddress = session.authorInfo?.address;
+      const preloadedTraits = fromAddress ? consumePreloadedTraits(fromAddress) : undefined;
+      if (preloadedTraits) traitsCache.set(convId, preloadedTraits);
     } else {
       intents.setAndLog(convId, "INTENT_DETECTION");
     }
@@ -167,7 +100,7 @@ export async function handleMessage(tac: TAC, params: {
     max_tokens: AGENTS[intent].max_tokens || 512,
     system: systemPrompt,
     messages: history,
-    tools: AGENTS[intent].tools || getAllTools(tac, session),
+    tools: AGENTS[intent].tools,
   });
 
   const reply = response.content
@@ -242,7 +175,7 @@ export async function handleMessage(tac: TAC, params: {
         max_tokens: AGENTS[intent].max_tokens || 512,
         system: systemPrompt,
         messages: history,
-        tools: AGENTS[intent].tools || getAllTools(tac, session),
+        tools: AGENTS[intent].tools,
       });
     }
 
@@ -265,19 +198,5 @@ export function clearConversation(session: ConversationSession): void {
   // PRINT Conversation on hangup
   console.log(JSON.stringify(histories.get(convId), null, 4));
 
-  // Purge every per-conversation cache so a hung-up call doesn't leak state
-  // into a subsequent one on the same caller number.
-  histories.delete(convId);
-  intents.delete(convId);
-  memoryCache.delete(convId);
-  traitsCache.delete(convId);
-
-  // The pending maps are keyed by the caller's E.164 address (populated on
-  // ConversationRelay setup). They normally clear themselves on the first
-  // prompt via resolveCallSid/resolveCustomParams, but a caller who hangs up
-  // before saying anything would leak an entry — sweep them here too.
-  if (from) {
-    pendingCallSidByFrom.delete(from);
-    pendingCustomParamsByFrom.delete(from);
-  }
+  purgeConversation(convId, from);
 }

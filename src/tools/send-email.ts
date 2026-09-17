@@ -45,6 +45,8 @@ function resolveProvider(): EmailProvider {
 // rendering the matrix so the email always reads top-down in a predictable
 // shape (name → destination → dates → group breakdown → contact → notes).
 const LEAD_FIELDS = [
+  { key: 'isAgent', label: 'Travel Agent?'},
+  { key: 'isRepeat', label: 'Repeat Customer?'},
   { key: 'firstName', label: 'First Name' },
   { key: 'lastName', label: 'Last Name' },
   { key: 'location', label: 'Destination' },
@@ -72,6 +74,8 @@ export const SEND_LEAD_EMAIL: Anthropic.Tool = {
         type: 'string',
         description: `Optional email subject. Defaults to "${DEFAULT_SUBJECT}" if omitted.`,
       },
+      isAgent: {type: 'boolean', description: "Is this a travel agent booking on behalf of the traveller"},
+      isRepeat: {type: 'boolean', description: "Has this traveller booked with Kensington Tours before"},
       firstName: { type: 'string', description: "Caller's first name." },
       lastName: { type: 'string', description: "Caller's last name." },
       location: {

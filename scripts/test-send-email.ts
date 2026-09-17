@@ -8,6 +8,8 @@ config();
 import { executeSendLeadEmail } from '../src/tools/send-email.js';
 
 const samplePayload = {
+  isAgent: false,
+  isRepeat: false,
   firstName: 'Test',
   lastName: 'Lead',
   location: 'Kenya',

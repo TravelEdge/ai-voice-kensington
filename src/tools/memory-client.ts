@@ -270,6 +270,14 @@ export const UPDATE_NEW_LEAD_TRAITS: Anthropic.Tool = {
         type: 'string',
         description: 'The dates the caller is interested in traveling.',
       },
+      isAgent: {
+        type: 'boolean',
+        description: 'Indicates whether the caller is a travel agent calling on behalf of the actual traveller'
+      },
+      isRepeat: {
+        type: 'boolean',
+        description: 'Indicates whether the caller is a repeat caller who has booked with Kensington Tours before'
+      }
     },
   },
 };
@@ -277,6 +285,8 @@ export const UPDATE_NEW_LEAD_TRAITS: Anthropic.Tool = {
 // Kept in sync with the NewLead trait group in Conversation Memory (see
 // the trait table in the KT admin console).
 const NEW_LEAD_TRAIT_FIELDS = [
+  'isAgent',
+  'isRepeat',
   'firstName',
   'lastName',
   'location',
@@ -319,11 +329,17 @@ export const executeUpdateNewLeadTraits = async (
     return 'Error: cannot update NewLead traits — TAC memory store is not configured.';
   }
 
-  const newLead: Record<string, string> = {};
+  // Preserve the incoming primitive type. The Memory API validates each trait
+  // against its declared schema type (isAgent/isRepeat are boolean; the rest
+  // are string) — coercing booleans to "true"/"false" here yields a 400
+  // "Validation failed ... Expected: boolean, given: string".
+  const newLead: Record<string, string | boolean> = {};
   for (const key of NEW_LEAD_TRAIT_FIELDS) {
     const value = toolInput[key];
     if (typeof value === 'string' && value.trim().length > 0) {
       newLead[key] = value.trim();
+    } else if (typeof value === 'boolean') {
+      newLead[key] = value;
     }
   }
 
