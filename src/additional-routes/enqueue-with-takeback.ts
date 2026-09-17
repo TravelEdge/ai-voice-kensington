@@ -152,6 +152,9 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
             conversationConfiguration: process.env.TWILIO_CONVERSATION_CONFIGURATION_ID,
             speechTimeout: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_SPEECH_TIMEOUT,
             voice: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_VOICE,
+            interruptible: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_INTERRUPTIBLE,
+            interruptSensitivity: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_INTERRUPT_SENSITIVITY,
+            welcomeGreetingInterruptible: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_WELCOME_GREETING_INTERRUPTIBLE,
         } as never);
         relay.parameter({ name: 'takeback', value: 'true' });
         if (preloadedTraits) {

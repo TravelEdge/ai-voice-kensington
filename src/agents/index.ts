@@ -8,6 +8,7 @@ import {
 } from 'twilio-agent-connect';
 
 import { getAllTools, executeTool, extractCustomerProfileId, getProfileTraitsForPrompt } from '../tools/index.js';
+import { executeHandoff } from '../tools/handoff.js';
 import { AGENTS, AGENT_NAMES, preparePrompt } from './prompts.js';
 import {
   histories,
@@ -21,6 +22,77 @@ import {
 } from '../cache/index.js';
 
 let claude: Anthropic | undefined;
+
+// Default TTS-friendly copy for the fallback path. Overridden by
+// FALLBACK_LIVE_ANSWER_MESSAGE env var.
+const DEFAULT_FALLBACK_LIVE_ANSWER_MESSAGE =
+  "I'm sorry, I'm having difficulty reaching critical services. " +
+  "I'm going to connect you to a live agent who will direct you to the correct specialist.";
+
+// Single retry with a short pause. Voice is real-time, so backoff is minimal —
+// if the second attempt fails, the outer handler falls back to a live-agent
+// handoff. Retries on any error (503, network, timeout, etc.) since we're
+// going to fall back anyway if the second attempt fails.
+async function callClaudeWithRetry(
+  params: Anthropic.MessageCreateParamsNonStreaming
+): Promise<Anthropic.Message> {
+  claude ??= new Anthropic();
+  try {
+    return await claude.messages.create(params);
+  } catch (err) {
+    console.warn(
+      `[CLAUDE] first attempt failed, retrying once: ${err instanceof Error ? err.message : String(err)}`
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return await claude.messages.create(params);
+  }
+}
+
+// Fallback when Claude is unreachable twice in a row. Manually invokes the
+// handoff tool (Claude can't do it because Claude is what's failing) to
+// enqueue the call into a fallback live-answer workflow, and returns a
+// TTS-friendly apology so ConversationRelay has something to speak before
+// the transfer.
+async function fallbackToLiveAgent(
+  tac: TAC,
+  session: ConversationSession,
+  history: Anthropic.MessageParam[],
+  err: unknown
+): Promise<string> {
+  console.error(
+    `[CLAUDE FAILURE] Both attempts failed, initiating fallback handoff: ${err instanceof Error ? err.message : String(err)}`
+  );
+
+  const workflowSid = process.env.HANDOFF_LIVE_ANSWER_WORKFLOW_SID;
+  const fallbackMessage =
+    process.env.FALLBACK_LIVE_ANSWER_MESSAGE ?? DEFAULT_FALLBACK_LIVE_ANSWER_MESSAGE;
+
+  if (workflowSid) {
+    try {
+      await executeHandoff(
+        {
+          workflow_sid: workflowSid,
+          reason: 'AI backend failure — automatic fallback to live agent',
+        },
+        tac,
+        session
+      );
+    } catch (handoffErr) {
+      console.error(
+        `[CLAUDE FAILURE] Fallback handoff also failed: ${handoffErr instanceof Error ? handoffErr.message : String(handoffErr)}`
+      );
+    }
+  } else {
+    console.error(
+      '[CLAUDE FAILURE] HANDOFF_LIVE_ANSWER_WORKFLOW_SID not set — cannot initiate fallback handoff'
+    );
+  }
+
+  // Keep history coherent: record the apology as the assistant turn so the
+  // next customer input (if any) doesn't confuse the model.
+  history.push({ role: 'assistant', content: fallbackMessage });
+  return fallbackMessage;
+}
 
 export async function handleMessage(tac: TAC, params: {
   conversationId: ConversationId;
@@ -67,9 +139,6 @@ export async function handleMessage(tac: TAC, params: {
   // store customers message
   history.push({ role: 'user', content: message });
 
-  // initialize claude if it hasnt already
-  claude ??= new Anthropic();
-
   // Extract customer profile ID from TAC memory response
   const memorySid = process.env.TWILIO_MEMORY_STORE_ID;
   const callSid = session.channel === 'voice' ? resolveCallSid(session) : undefined;
@@ -93,102 +162,109 @@ export async function handleMessage(tac: TAC, params: {
 
   // generate the prompt for the relevant agent
   const systemPrompt = await preparePrompt(intent, session, AGENTS[intent].prompt, traitsContext)
-  
-  
-  let response = await claude.messages.create({
-    model: AGENTS[intent].model,
-    max_tokens: AGENTS[intent].max_tokens || 512,
-    system: systemPrompt,
-    messages: history,
-    tools: AGENTS[intent].tools,
-  });
 
-  const reply = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
+  try {
+    let response = await callClaudeWithRetry({
+      model: AGENTS[intent].model,
+      max_tokens: AGENTS[intent].max_tokens || 512,
+      system: systemPrompt,
+      messages: history,
+      tools: AGENTS[intent].tools,
+    });
 
-  if (intent === "INTENT_DETECTION"){
-    
-    if(Object.values(AGENT_NAMES).includes(reply as AGENT_NAMES)) {
-      intents.setAndLog(convId, reply);
-      return handleMessage(tac, { conversationId, message, session })
-    } else {
-      history.push({ role: 'assistant', content: reply });
-      return reply;
-    }
-
-
-  } else if (reply === "CHANGE_INTENT"){
-    intents.setAndLog(convId, "INTENT_DETECTION");
-    return handleMessage(tac, { conversationId, message, session })
-  } else {
-
-    const { content } = response;
-    content.forEach((value, index) => {
-      if (value.type === "text") console.log(`%cCLAUDE RESPONSE[${index}]: %c` + value.text, "color: blue;", "color: green;")
-    })
-    
-    // Handle tool calls (agentic loop)
-    while (response.stop_reason === 'tool_use') {
-      const toolUseBlocks = response.content.filter(
-        (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
-      );
-
-      // Add assistant's response (including tool_use blocks) to history
-      history.push({
-        role: 'assistant',
-        content: response.content,
-      });
-
-      // Execute all tool calls and collect results
-      const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
-        toolUseBlocks.map(async (toolUse) => {
-          console.log(`[TOOL_CALL] ${toolUse.name} with input:`, toolUse.input);
-          const result = await executeTool(
-            toolUse.name,
-            toolUse.input as Record<string, unknown>,
-            tac,
-            { profileId, memorySid, callSid },
-            session,
-            undefined
-          );
-          console.log(`[TOOL_RESULT] ${toolUse.name}:`, result.substring(0, 200) + '...');
-
-          return {
-            type: 'tool_result',
-            tool_use_id: toolUse.id,
-            content: result,
-          };
-        })
-      );
-
-      // Add tool results to history
-      history.push({
-        role: 'user',
-        content: toolResults,
-      });
-
-      // Continue the conversation with tool results
-      response = await claude.messages.create({
-        model: AGENTS[intent].model,
-        max_tokens: AGENTS[intent].max_tokens || 512,
-        system: systemPrompt,
-        messages: history,
-        tools: AGENTS[intent].tools,
-      });
-    }
-
-    // Extract final text response
-    const final_reply = response.content
+    const reply = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
       .join('');
 
-    history.push({ role: 'assistant', content: final_reply });
+    if (intent === "INTENT_DETECTION"){
 
-    return reply;
-}
+      if(Object.values(AGENT_NAMES).includes(reply as AGENT_NAMES)) {
+        intents.setAndLog(convId, reply);
+        return handleMessage(tac, { conversationId, message, session })
+      } else {
+        history.push({ role: 'assistant', content: reply });
+        return reply;
+      }
+
+
+    } else if (reply === "CHANGE_INTENT"){
+      intents.setAndLog(convId, "INTENT_DETECTION");
+      return handleMessage(tac, { conversationId, message, session })
+    } else {
+
+      const { content } = response;
+      content.forEach((value, index) => {
+        if (value.type === "text") console.log(`%cCLAUDE RESPONSE[${index}]: %c` + value.text, "color: blue;", "color: green;")
+      })
+
+      // Handle tool calls (agentic loop)
+      while (response.stop_reason === 'tool_use') {
+        const toolUseBlocks = response.content.filter(
+          (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
+        );
+
+        // Add assistant's response (including tool_use blocks) to history
+        history.push({
+          role: 'assistant',
+          content: response.content,
+        });
+
+        // Execute all tool calls and collect results
+        const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
+          toolUseBlocks.map(async (toolUse) => {
+            console.log(`[TOOL_CALL] ${toolUse.name} with input:`, toolUse.input);
+            const result = await executeTool(
+              toolUse.name,
+              toolUse.input as Record<string, unknown>,
+              tac,
+              { profileId, memorySid, callSid },
+              session,
+              undefined
+            );
+            console.log(`[TOOL_RESULT] ${toolUse.name}:`, result.substring(0, 200) + '...');
+
+            return {
+              type: 'tool_result',
+              tool_use_id: toolUse.id,
+              content: result,
+            };
+          })
+        );
+
+        // Add tool results to history
+        history.push({
+          role: 'user',
+          content: toolResults,
+        });
+
+        // Continue the conversation with tool results
+        response = await callClaudeWithRetry({
+          model: AGENTS[intent].model,
+          max_tokens: AGENTS[intent].max_tokens || 512,
+          system: systemPrompt,
+          messages: history,
+          tools: AGENTS[intent].tools,
+        });
+      }
+
+      // Extract final text response
+      const final_reply = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map((b) => b.text)
+        .join('');
+
+      history.push({ role: 'assistant', content: final_reply });
+
+      return reply;
+    }
+  } catch (err) {
+    // Two consecutive Claude failures — fall back to a live-agent handoff so
+    // the caller isn't stuck on a broken bot. This bypasses Claude entirely
+    // (invoking the handoff tool directly from code) because the model is
+    // exactly what's unavailable.
+    return fallbackToLiveAgent(tac, session, history, err);
+  }
 }
 
 export function clearConversation(session: ConversationSession): void {

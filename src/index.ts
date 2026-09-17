@@ -14,6 +14,7 @@ import {
 } from './agents/index.js';
 import {
   cacheBackendData,
+  histories,
   registerPendingCallSid,
   registerPendingCustomParams,
   registerPreloadedTraits,
@@ -38,6 +39,17 @@ const speechTimeout: 'auto' | number | undefined =
     : speechTimeoutEnv === 'auto' ? 'auto'
     : Number(speechTimeoutEnv);
 
+// Barge-in tuning. `interruptible` gates what caller input cuts off TTS
+// ("speech" ignores accidental DTMF), and `interruptSensitivity` controls how
+// easily background noise triggers an interrupt (Twilio defaults to "high",
+// which fires on coughs / backchannel "mm-hmm"s — "medium" is safer).
+const interruptible = process.env.DEFAULT_TWIML_OPTIONS_INTERRUPTIBLE as
+  | 'any' | 'speech' | 'none' | undefined;
+const interruptSensitivity = process.env.DEFAULT_TWIML_OPTIONS_INTERRUPT_SENSITIVITY as
+  | 'high' | 'medium' | 'low' | undefined;
+const welcomeGreetingInterruptible = process.env.DEFAULT_TWIML_OPTIONS_WELCOME_GREETING_INTERRUPTIBLE as
+  | 'any' | 'speech' | 'none' | undefined;
+
 // Register channels
 const voiceChannel = new VoiceChannel(tac, {
   memoryMode: "never",
@@ -46,6 +58,9 @@ const voiceChannel = new VoiceChannel(tac, {
     welcomeGreeting: process.env.DEFAULT_TWIML_OPTIONS_WELCOME_GREETING,
     actionUrl: `https://${process.env.TWILIO_VOICE_PUBLIC_DOMAIN}/enqueue-or-end-call`,
     voice: process.env.DEFAULT_TWIML_OPTIONS_VOICE,
+    interruptible,
+    interruptSensitivity,
+    welcomeGreetingInterruptible,
   }
 
 });
@@ -86,6 +101,37 @@ voiceChannel.on('setup', ({ callSid, from, customParameters }) => {
   if (typeof preloadedTraits === 'string' && preloadedTraits.length > 0) {
     registerPreloadedTraits(from, preloadedTraits);
   }
+});
+
+// Barge-in bookkeeping. ConversationRelay stops TTS on its side automatically
+// and TAC aborts the in-flight stream task before this fires — our job here is
+// to fix the transcript. The last assistant turn in history is the FULL text
+// we intended to say; rewrite it to what the caller actually heard (from
+// utteranceUntilInterrupt) and tag it so Claude's next turn doesn't try to
+// finish the interrupted thought.
+voiceChannel.on('interrupt', ({ conversationId, utteranceUntilInterrupt, durationUntilInterruptMs }) => {
+  const convId = String(conversationId);
+  const history = histories.get(convId);
+  if (!history || history.length === 0) return;
+
+  const last = history[history.length - 1];
+  // Skip tool_use turns (content is an array) — those aren't spoken to the caller.
+  if (last.role !== 'assistant' || typeof last.content !== 'string') return;
+
+  const spoken = (utteranceUntilInterrupt ?? '').trim();
+  if (spoken.length === 0) {
+    // Nothing reached the caller — drop the turn entirely.
+    history.pop();
+  } else {
+    last.content = `${spoken} [caller interrupted]`;
+  }
+
+  console.log(
+    `%cINTERRUPT: %c${spoken || '(nothing spoken)'} %c(${durationUntilInterruptMs ?? 0}ms)`,
+    'color: yellow;',
+    'color: green;',
+    'color: gray;',
+  );
 });
 
 // Single handler for all channels — TAC routes the response back correctly
