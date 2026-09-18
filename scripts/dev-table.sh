@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-LOG_FORMAT=json NODE_ENV=development tsx src/index.ts | jq -rR --unbuffered '
+LOG_FORMAT=json NODE_ENV=development NODE_OPTIONS='--disable-warning=FSTDEP023' tsx src/index.ts | jq -rR --unbuffered '
   . as $line
   | try (fromjson) catch empty
   | select(.msg | IN("CUSTOM_ROUTE","CUSTOMER_INPUT","INTENT_CHANGE","AGENT_RESPONSE","CLAUDE_API","INTERRUPT","TOOL_CALL","TOOL_RESULT","CONVERSATION_ENDED"))
