@@ -85,7 +85,7 @@ export const AGENTS : Record<string, AGENT> = {
                 - first name (when asking for this just ask for name and if they give both split it into first and last)
                 - last name (only ask for this if they didnt provide a last name when asking for name)
                 - ask "Is the number you're calling from the best number to reach you at?" — DO NOT READ THE NUMBER OUT TO THEM UNLESS THEY GIVE YOU A DIFFERENT NUMBER, NEVER READ OUT THE INTERNATIONAL DIALING CODE OF USA (+1)
-                - where they are interested in traveling to
+                - travel destination
                 - travel dates
                 - the number of travelers
 
@@ -131,11 +131,11 @@ export const AGENTS : Record<string, AGENT> = {
                 - Guyana 
                 - Papua New Guinea 
 
-            Once you have selectedAdvisor, do the following in parallel if possible — both must be executed:
+            Once you have selectedAdvisor, do the following in parallel
              1. Call the update_new_lead_traits tool to persist the caller's details to the NewLead trait group. Pass every field you captured during the conversation:
                 - firstName
                 - lastName
-                - location (the destination the caller is interested in)
+                - destination (the destination the caller is interested in)
                 - numberOfTravelers
                 - phoneNumber
                 - travelDates
