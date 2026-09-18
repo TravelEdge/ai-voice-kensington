@@ -25,6 +25,7 @@ import { lookupConversationIdByCallSid } from '../logger.js';
 async function finalizeConversation(
     tac: TAC,
     log: FastifyBaseLogger,
+    route: string,
     callSid: string,
     reason: string,
 ): Promise<void> {
@@ -32,6 +33,7 @@ async function finalizeConversation(
     if (!convId) {
         log.warn(
             {
+                route,
                 callSid,
                 reason,
                 description: 'CR session ended but no conversationId is registered for this CallSid — nothing to clean up',
@@ -47,6 +49,7 @@ async function finalizeConversation(
             await coClient.updateConversation(convId, 'CLOSED');
             log.info(
                 {
+                    route,
                     callSid,
                     conversationId: convId,
                     reason,
@@ -57,6 +60,7 @@ async function finalizeConversation(
         } catch (err) {
             log.warn(
                 {
+                    route,
                     callSid,
                     conversationId: convId,
                     reason,
@@ -319,7 +323,7 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
             );
             reply.type('text/xml');
             await reply.send(new Twilio.twiml.VoiceResponse().toString());
-            await finalizeConversation(tac, log, CallSid, 'caller-hangup');
+            await finalizeConversation(tac, log, '/enqueue-or-end-call', CallSid, 'caller-hangup');
             return;
         }
 
@@ -340,7 +344,7 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
             );
             reply.type('text/xml');
             await reply.send(new Twilio.twiml.VoiceResponse().toString());
-            await finalizeConversation(tac, log, CallSid, 'end-call-tool');
+            await finalizeConversation(tac, log, '/enqueue-or-end-call', CallSid, 'end-call-tool');
             return;
         }
 
@@ -457,7 +461,7 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
         // Any other QueueResult means the enqueue ended without a live agent
         // picking up — hangup, timeout, queue-full, error. Clean up.
         if (CallSid) {
-            await finalizeConversation(tac, log, CallSid, `enqueue-${QueueResult ?? 'unknown'}`);
+            await finalizeConversation(tac, log, '/enqueue-completed', CallSid, `enqueue-${QueueResult ?? 'unknown'}`);
         }
 
         // Return empty TwiML so the call terminates cleanly.
