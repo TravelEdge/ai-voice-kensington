@@ -202,6 +202,9 @@ export async function handleMessage(
         {
           response,
           customerToAgentResponseTime: Math.round(performance.now() - store.startedAt),
+          // Diagnostic — surfaces whether the response-time clock was reset
+          // by a preceding interrupt, or measured from handleMessage entry.
+          startedFrom: store.startedFrom,
           claudeApiResponseTimes: store.claudeApiCalls,
         },
         'AGENT_RESPONSE',

@@ -43,6 +43,12 @@ interface SessionStore {
   callSid?: string;
   log: Logger;
   startedAt: number;
+  // Source of `startedAt`: `'interrupt'` means the caller barged in mid-TTS
+  // and the response-time clock was reset to that moment; `'customer-input'`
+  // means no pending interrupt existed and the timer started at handleMessage
+  // entry. Surfaced on AGENT_RESPONSE so the interrupt-reset behaviour is
+  // visible in the logs.
+  startedFrom: 'interrupt' | 'customer-input';
   claudeApiCalls: ClaudeApiCall[];
 }
 
@@ -128,6 +134,8 @@ export function runInSession<T>(
   // ASR delivered the transcribed prompt.
   const interruptedAt = consumeInterruptTimestamp(conversationId);
   const startedAt = interruptedAt ?? performance.now();
+  const startedFrom: 'interrupt' | 'customer-input' =
+    interruptedAt !== undefined ? 'interrupt' : 'customer-input';
 
   const bindings: Record<string, unknown> = { type: 'session', conversationId };
   if (callSid) bindings.callSid = callSid;
@@ -137,6 +145,7 @@ export function runInSession<T>(
     callSid,
     log: logger.child(bindings),
     startedAt,
+    startedFrom,
     claudeApiCalls: [],
   };
   return sessionContext.run(store, fn);
