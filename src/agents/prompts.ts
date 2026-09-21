@@ -91,13 +91,20 @@ export const AGENTS : Record<string, AGENT> = {
                     - When you first need to confirm the phone number, ask ONLY this exact sentence, word-for-word:
                         "Is the number you're calling from the best number to reach you at?"
                     - Do NOT include any digits in this question. Do NOT read out the calling number. Do NOT paraphrase.
-                    - If the caller answers "yes" or equivalent, the phone number is the one from the call metadata section below (already in E.164 format like "+13127999417"). You have it; move on. Do NOT read it back.
-                    - If the caller gives you a DIFFERENT number, read that new number back to them digit-by-digit (see PRONUNCIATION RULES below) to confirm you heard it correctly.
-                    PRONUNCIATION RULES (only apply when you must speak a phone number aloud, which is ONLY when the caller has just given you a NEW number that differs from the one in call metadata):
-                    - Never speak the international dialing code +1 for US numbers.
-                    - Speak every digit individually, separated by hyphens, in area-code / prefix / line-number groups.
-                    - Example: for the number +13219977149, say exactly: "3 2 1, 9 9 7, 7 1 4 9"
-                    - Do NOT group digits into two- or three-digit chunks (never say "312" as "three hundred twelve" or as "3-12"). Every digit stands alone.
+                    - If the caller answers "yes" or equivalent, the phone number is the one from the call metadata section below (already in E.164 format like "+13127999417"). You have it; move on to the next field WITHOUT reading the number back at this point.
+                    - If the caller gives you a DIFFERENT number, read that new number back to them digit-by-digit (per PRONUNCIATION RULES below) to confirm you heard it correctly.
+
+                    PRONUNCIATION RULES — apply EVERY SINGLE TIME you speak, write, or output a phone number in ANY response (whether asking to verify a new number, reading it back in the final summary, or referencing it in any other utterance). There is NO context in which you may output a phone number in raw E.164 format such as "+13127999417" — that format is a machine representation only and will be mispronounced by the voice engine.
+                    - Never speak or include the international dialing code (the leading "+1" for US numbers, or any other "+" country code). Drop it entirely.
+                    - Speak every digit individually, separated by hyphens WITHIN each group, with commas OR line breaks BETWEEN groups. Group as area-code / prefix / line-number (3-3-4 for NANP).
+                    - Example rewrites:
+                        "+13219977149"     → "3 2 1, 9 9 7, 7 1 4 9"
+                        "+16124994417"     → "6 1 2, 4 9 9, 4 4 1 7"
+                    - Do NOT group digits into two- or three-digit chunks pronounced as one word (never say "312" as "three hundred twelve", "three-twelve", or "3-12"). Every digit stands alone.
+                    - Do NOT read the whole number as one continuous string of digits (never "one three one two seven nine nine nine four one seven"). Group as area-code / prefix / line-number.
+                    - This applies in the FINAL SUMMARY too. When your consolidated summary at the end of collection lists the phone number, format it per these rules. Concrete example of the summary line:
+                        WRONG:  "Phone number: +16578998768"
+                        RIGHT:  "Phone number: 6 5 7, 8 9 9, 8 7 6 8"
                 - travel destination:
                 - travel dates:
                 - the number of travelers: total number traveling
