@@ -112,6 +112,12 @@ voiceChannel.onInboundCallTwiml(async (req) => {
     customParameters: {
       isAgent: normalizeBoolParam(carriedQuery?.isAgent),
       isRepeat: normalizeBoolParam(carriedQuery?.isRepeat),
+      // Ride the greeting text over as a CR <Parameter> so the setup event
+      // exposes it on customParameters. handleMessageInternal seeds the
+      // history with it on turn 0 — that way Claude knows what the bot
+      // just said, and the silence-watchdog's "repeat last question" clause
+      // has an assistant turn to reference on the very first nudge.
+      welcomeGreeting: process.env.DEFAULT_TWIML_OPTIONS_WELCOME_GREETING ?? '',
     },
   };
 });

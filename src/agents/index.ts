@@ -259,6 +259,19 @@ async function handleMessageInternal(
     } else {
       intents.setAndLog(convId, "INTENT_DETECTION");
     }
+
+    // Seed history with the welcome greeting CR just spoke to the caller.
+    // The greeting rides in on the CR setup event as a customParameter (set
+    // by voiceChannel.onInboundCallTwiml on the inbound path, and by
+    // relay.parameter(...) on the takeback path). Without this seed, Claude
+    // starts every conversation with an empty history and doesn't know what
+    // the bot has already said — it may repeat/contradict the greeting or
+    // fail to reference "the last question" on a first-turn silence nudge.
+    const greeting = customParams?.welcomeGreeting;
+    const history = histories.get(convId)!;
+    if (typeof greeting === 'string' && greeting.trim().length > 0 && history.length === 0) {
+      history.push({ role: 'assistant', content: greeting });
+    }
   }
 
   // fetch the converstion

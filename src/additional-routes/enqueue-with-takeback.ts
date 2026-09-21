@@ -288,6 +288,15 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
             // it here on the /redirect-back-to-agent instance.
             relay.parameter({ name: 'traits', value: preloadedTraits });
         }
+        // Ride the takeback greeting over as a CR <Parameter> so
+        // handleMessageInternal can seed the STACK_CALL history with it as
+        // turn 0. Without this, Claude never sees the "I apologize, it
+        // appears the agent i tried to transfer you to is not available..."
+        // line and may repeat/contradict it on the first response.
+        const takebackGreeting = process.env.RETURN_TO_AGENT_TWIML_OPTIONS_WELCOME_GREETING;
+        if (takebackGreeting) {
+            relay.parameter({ name: 'welcomeGreeting', value: takebackGreeting });
+        }
 
         const client = Twilio(
             process.env.TWILIO_ACCOUNT_SID,

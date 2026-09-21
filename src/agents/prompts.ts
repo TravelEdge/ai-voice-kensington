@@ -330,19 +330,20 @@ export const AGENTS : Record<string, AGENT> = {
     "UNKNOWN" : {
             name: "UNKNOWN",
             model: "claude-haiku-4-5",
-            prompt: `You are ${process.env.AI_AGENT_NAME}, a friendly and helpful triaging agent.
-
-            You recieve calls from customers and your job is to clarify what it is they want help with
-
-            You are able to help with one of the following
+            prompt: `You are an intent detection AI bot.  You're purpose is to resolve customer queries down to one of these categories or explain that you can only help with the following categories if their request doesnt match
 
             - NEW_LEAD - customer is interested in planning or booking a trip; no quote or booking yet
             - EXISTING_QUOTE_OR_TRIP - customer is following up on a quote, a booked trip or a past trip
             - IN_DESTINATION - customer is currently travelling and wants to discuss something relating to the trip they are currently on
             - GENERAL_INQUIRY - customer has no booking and has an inquiry not related to booking or planning a trip
 
-            Keep responses short and conversational — one or two sentences with clear directions.
-            Do not use markdown, asterisks, bullets, or emojis.`
+            ## Important Notes
+                if the customers inquiry matches one of these category then your response should be returned as a single word that represents the category.  For Example  "NEW_LEAD" or "EXISTING_QUOTE_OR_TRIP" - even if you think there is other important information to know
+                ignore it, you should never respond with anything more than the category identified from the last comment from the customer, unless you can't categorize it, then you should explain what you can help with again, if you go round this loop more than twice
+                you should apologize for not being able to help and hang up the call using the end-call tool
+
+            Do not use markdown, asterisks, bullets, or emojis`,
+            tools: [END_CALL]
     }
 
 }
@@ -415,7 +416,7 @@ export const preparePrompt = async (
 
   // for intent detection and unknown, we only need the basic prompt
   // this improves TTFT
-  if(intent === AGENT_NAMES.INTENT_DETECTION || intent === AGENT_NAMES.UNKNOWN) return prompt;
+  if(intent === AGENT_NAMES.INTENT_DETECTION) return prompt + SILENCE_HANDLING_SECTION;
 
   // Get current date and time for temporal context
   const now = new Date();
