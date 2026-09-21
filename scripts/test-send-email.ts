@@ -1,0 +1,34 @@
+// Smoke test for the send_lead_email tool.
+// Loads .env, invokes executeSendLeadEmail with a fake NEW_LEAD payload,
+// and prints the tool's return string. Run with:
+//   npx tsx scripts/test-send-email.ts
+//
+// `import 'dotenv/config'` MUST be first: it populates process.env as a
+// side effect of import resolution, before send-email.js (which pulls in
+// logger.ts) reads env at module init. The older `import { config }; config()`
+// pattern runs config() too late in ESM because imports are hoisted above
+// the statement.
+import 'dotenv/config';
+
+import { executeSendLeadEmail } from '../src/tools/send-email.js';
+
+const samplePayload = {
+  isAgent: false,
+  isRepeat: false,
+  firstName: 'Test',
+  lastName: 'Lead',
+  location: 'Kenya',
+  travelDates: 'Mid-March 2027, 10 nights',
+  numberOfTravelers: '4',
+  numberOfAdults: '2',
+  numberOfChildren: '2',
+  numberOfRooms: '2',
+  twinRoom: 'yes',
+  phoneNumber: '+15551234567',
+  email: 'test.lead@example.com',
+  notes: 'Smoke test invocation from scripts/test-send-email.ts',
+};
+
+console.log('[test] Invoking executeSendLeadEmail with sample payload…');
+const result = await executeSendLeadEmail(samplePayload);
+console.log('[test] Tool result:', result);

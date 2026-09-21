@@ -1,0 +1,248 @@
+diff --git a/node_modules/twilio-agent-connect/dist/index.d.ts b/node_modules/twilio-agent-connect/dist/index.d.ts
+index 28f8db1..076c567 100644
+--- a/node_modules/twilio-agent-connect/dist/index.d.ts
++++ b/node_modules/twilio-agent-connect/dist/index.d.ts
+@@ -1662,6 +1662,22 @@ declare const DtmfMessageSchema: z.ZodObject<{
+     digit: z.ZodString;
+ }, z.core.$strip>;
+ type DtmfMessage = z.infer<typeof DtmfMessageSchema>;
++/**
++ * ConversationRelay speaker-events: agent TTS start/stop
++ */
++declare const AgentSpeakingMessageSchema: z.ZodObject<{
++    type: z.ZodLiteral<"agentSpeaking">;
++    value: z.ZodString;
++}, z.core.$strip>;
++type AgentSpeakingMessage = z.infer<typeof AgentSpeakingMessageSchema>;
++/**
++ * ConversationRelay speaker-events: caller speech start/stop
++ */
++declare const ClientSpeakingMessageSchema: z.ZodObject<{
++    type: z.ZodLiteral<"clientSpeaking">;
++    value: z.ZodString;
++}, z.core.$strip>;
++type ClientSpeakingMessage = z.infer<typeof ClientSpeakingMessageSchema>;
+ /**
+  * Union of all WebSocket message types
+  */
+@@ -1692,6 +1708,12 @@ declare const WebSocketMessageSchema: z.ZodUnion<readonly [z.ZodObject<{
+ }, z.core.$strip>, z.ZodObject<{
+     type: z.ZodLiteral<"dtmf">;
+     digit: z.ZodString;
++}, z.core.$strip>, z.ZodObject<{
++    type: z.ZodLiteral<"agentSpeaking">;
++    value: z.ZodString;
++}, z.core.$strip>, z.ZodObject<{
++    type: z.ZodLiteral<"clientSpeaking">;
++    value: z.ZodString;
+ }, z.core.$strip>]>;
+ type WebSocketMessage = z.infer<typeof WebSocketMessageSchema>;
+ /**
+@@ -3564,6 +3586,27 @@ interface DtmfEvent {
+ }
+ /** Handler for ConversationRelay `dtmf` messages (caller keypresses). */
+ type DtmfHandler = (event: DtmfEvent) => Promise<void> | void;
++/**
++ * Event payload for ConversationRelay `agentSpeaking` speaker-events.
++ * `value` is typically `"on"` (TTS started) or `"off"` (TTS finished).
++ */
++interface AgentSpeakingEvent {
++    conversationId: ConversationId | undefined;
++    callSid: string | undefined;
++    value: string;
++    session?: ConversationSession;
++}
++type AgentSpeakingHandler = (event: AgentSpeakingEvent) => Promise<void> | void;
++/**
++ * Event payload for ConversationRelay `clientSpeaking` speaker-events.
++ */
++interface ClientSpeakingEvent {
++    conversationId: ConversationId | undefined;
++    callSid: string | undefined;
++    value: string;
++    session?: ConversationSession;
++}
++type ClientSpeakingHandler = (event: ClientSpeakingEvent) => Promise<void> | void;
+ /**
+  * Voice channel event callbacks extending base callbacks
+  */
+@@ -3588,6 +3631,10 @@ interface VoiceChannelEvents extends BaseChannelEvents {
+     }) => void;
+     /** Caller keypress. See {@link VoiceChannel.onDtmf}. */
+     onDtmf?: DtmfHandler;
++    /** Agent TTS start/stop. Requires ConversationRelay `events="speaker-events"`. */
++    onAgentSpeaking?: AgentSpeakingHandler;
++    /** Caller speech start/stop. Requires ConversationRelay `events="speaker-events"`. */
++    onClientSpeaking?: ClientSpeakingHandler;
+     /**
+      * Fired once the session and WebSocket registration exist — in orchestrated
+      * mode possibly before the first prompt, since the lookup starts at setup.
+@@ -3733,6 +3780,10 @@ declare class VoiceChannel extends BaseChannel {
+      * ```
+      */
+     onDtmf(callback: DtmfHandler): void;
++    /** Register a callback for ConversationRelay `agentSpeaking` speaker-events. */
++    onAgentSpeaking(callback: AgentSpeakingHandler): void;
++    /** Register a callback for ConversationRelay `clientSpeaking` speaker-events. */
++    onClientSpeaking(callback: ClientSpeakingHandler): void;
+     /**
+      * Resolve the public WebSocket URL from `TACConfig.voicePublicDomain` +
+      * `TACConfig.voiceWebsocketPath`. Throws if `voicePublicDomain` isn't set.
+@@ -4712,4 +4763,4 @@ declare class TACServer {
+     stop(): Promise<void>;
+ }
+ 
+-export { type ActionChannelSettings, ActionChannelSettingsSchema, type ActionParticipantRef, ActionParticipantRefSchema, type ActionResponse, ActionResponseSchema, type ActionTextContent, ActionTextContentSchema, type AdapterOptions, type AmdEvent, AmdEventSchema, type AmdHandler, type AnthropicTool, AnthropicToolSchema, type AuthorInfo, AuthorInfoSchema, BaseChannel, type BaseChannelEvents, type BaseChannelOptions, BaseClient, type BuiltInToolName, BuiltInTools, CALL_EVENT_KINDS, type CallEventKind, CallEventKindSchema, type CallOptions, CallOptionsSchema, type CallStatusEvent, CallStatusEventSchema, type CallStatusHandler, type CaptureRule, CaptureRuleSchema, type ChannelSettings, ChannelSettingsSchema, type ChannelType, ChannelTypeSchema, ChatChannel, type ChatChannelConfig, type CintelParticipant, CintelParticipantSchema, type Communication, type CommunicationContent, CommunicationContentSchema, type CommunicationParticipant, CommunicationParticipantSchema, CommunicationSchema, type ConversationAddress, ConversationAddressSchema, ConversationClient, type ConversationConfiguration, ConversationConfigurationSchema, type ConversationEndedCallback, type ConversationGroupingType, ConversationGroupingTypeSchema, type ConversationId, type ConversationIntelligenceConfig, ConversationIntelligenceConfigSchema, type ConversationParticipant, ConversationParticipantSchema, type ConversationRelayAttributes, ConversationRelayAttributesSchema, type ConversationRelayCallbackPayload, ConversationRelayCallbackPayloadSchema, type ConversationRelayConfig, ConversationRelayConfigSchema, type ConversationResponse, ConversationResponseSchema, type ConversationSession, ConversationSessionSchema, type ConversationSummaryItem, ConversationSummaryItemSchema, type ConversationWebhookPayload, type CreateConversationSummariesResponse, CreateConversationSummariesResponseSchema, type CreateObservationResponse, CreateObservationResponseSchema, type CreateObservationsRequest, CreateObservationsRequestSchema, type CustomParameters, CustomParametersSchema, type DtmfEvent, type DtmfHandler, type DtmfMessage, DtmfMessageSchema, EMPTY_MEMORY_RESPONSE, EnvironmentVariables, type ExecutionDetails, ExecutionDetailsSchema, type HandoffPayload, HandoffPayloadSchema, type HandoffResult, type InboundCallTwimlHandler, type InitiateChatConversationOptions, type InitiateConversationResult, type InitiateMessagingConversationOptions, InitiateMessagingConversationOptionsSchema, type InitiateVoiceConversationOptions, InitiateVoiceConversationOptionsSchema, type InitiateVoiceConversationResult, type IntelligenceConfiguration, IntelligenceConfigurationSchema, type InterruptCallback, type InterruptMessage, InterruptMessageSchema, type InterruptMode, InterruptModeSchema, type JSONSchema, JSONSchemaSchema, type KnowledgeBase, KnowledgeBaseSchema, type KnowledgeBaseStatus, KnowledgeBaseStatusSchema, type KnowledgeChunkResult, KnowledgeChunkResultSchema, KnowledgeClient, type KnowledgeSearchResponse, KnowledgeSearchResponseSchema, type LanguageAttributes, LanguageAttributesSchema, type LanguageConfig, LanguageConfigSchema, type ListCommunicationsResponse, ListCommunicationsResponseSchema, type ListConversationsResponse, ListConversationsResponseSchema, type ListParticipantsResponse, ListParticipantsResponseSchema, type Logger, type MemoryChannelType, MemoryChannelTypeSchema, MemoryClient, type MemoryCommunication, type MemoryCommunicationContent, MemoryCommunicationContentSchema, MemoryCommunicationSchema, type MemoryDeliveryStatus, MemoryDeliveryStatusSchema, type MemoryMode, MemoryModeSchema, type MemoryParticipant, MemoryParticipantSchema, type MemoryParticipantType, MemoryParticipantTypeSchema, MemoryPromptBuilder, type MemoryRetrievalRequest, MemoryRetrievalRequestSchema, type MemoryRetrievalResponse, MemoryRetrievalResponseSchema, type MessageDirection, MessageDirectionSchema, type MessageReadyCallback, MessagingChannel, type MessagingChannelConfig, type MessagingChannelEvents, type ObservationCreateRequest, ObservationCreateRequestSchema, type ObservationInfo, ObservationInfoSchema, type OpenAITool, OpenAIToolSchema, type Operator, type OperatorProcessingResult, OperatorProcessingResultSchema, type OperatorResult, type OperatorResultEvent, OperatorResultEventSchema, OperatorResultProcessor, OperatorResultSchema, OperatorSchema, type ParticipantAddress, ParticipantAddressSchema, type ParticipantAddressType, ParticipantAddressTypeSchema, type ParticipantId, type PendingHandoffData, PendingHandoffDataSchema, type Profile, type ProfileId, type ProfileLookupResponse, ProfileLookupResponseSchema, type ProfileResponse, ProfileResponseSchema, type PromptMessage, PromptMessageSchema, RCSChannel, type RecordingEvent, RecordingEventSchema, type RecordingHandler, SMSChannel, type SendMessageActionPayload, SendMessageActionPayloadSchema, type SendMessageActionRequest, SendMessageActionRequestSchema, type SessionInfo, SessionInfoSchema, type SessionMessage, SessionMessageSchema, type SetupMessage, SetupMessageSchema, type StatusCallback, StatusCallbackSchema, type StatusTimeouts, StatusTimeoutsSchema, type StreamTask, type SummaryInfo, SummaryInfoSchema, TAC, type TACChannelType, TACChannelTypeSchema, type TACCommunication, type TACCommunicationAuthor, TACCommunicationAuthorSchema, type TACCommunicationContent, TACCommunicationContentSchema, TACCommunicationSchema, TACConfig, type TACConfigData, TACConfigSchema, type TACDeliveryStatus, TACDeliveryStatusSchema, TACMemoryResponse, type TACOptions, type TACParticipantType, TACParticipantTypeSchema, TACServer, type TACServerConfig, TACTool, type TextTokenMessage, TextTokenMessageSchema, type ToolContext, type ToolExecutionResult, ToolExecutionResultSchema, type ToolFunction, type Transcription, TranscriptionSchema, type TranscriptionWord, TranscriptionWordSchema, type TwiMLOptions, TwiMLOptionsSchema, type TwiMLRequest, TwiMLRequestSchema, type TwilioMemoryConfig, TwilioMemoryConfigSchema, type TypedCallOptions, VoiceChannel, type VoiceChannelConfig, type VoiceChannelEvents, type WebSocketMessage, WebSocketMessageSchema, WhatsAppChannel, type _CallsCreateDriftGuards, type _SDKDriftGuards, amdEventFromForm, buildHandoffPayload, callOptionsToCreateParams, callStatusEventFromForm, createKnowledgeSearchTool, createKnowledgeSearchToolAsync, createKnowledgeTools, createLogger, createMemoryRetrievalTool, createMemoryTools, createMessagingTools, createSendMessageTool, createStudioHandoffTool, defineTool, isConversationId, isParticipantId, isProfileId, maskAddress, maskEmail, maskPhone, postStudioHandoff, recordingEventFromForm, redactTwimlParameters, scrubObject, scrubPii, studioExecutionsUrl, studioVoiceHandoffUrl, twiMLRequestFromForm };
++export { type ActionChannelSettings, ActionChannelSettingsSchema, type ActionParticipantRef, ActionParticipantRefSchema, type ActionResponse, ActionResponseSchema, type ActionTextContent, ActionTextContentSchema, type AdapterOptions, type AmdEvent, AmdEventSchema, type AmdHandler, type AnthropicTool, AnthropicToolSchema, type AuthorInfo, AuthorInfoSchema, BaseChannel, type BaseChannelEvents, type BaseChannelOptions, BaseClient, type BuiltInToolName, BuiltInTools, CALL_EVENT_KINDS, type CallEventKind, CallEventKindSchema, type CallOptions, CallOptionsSchema, type CallStatusEvent, CallStatusEventSchema, type CallStatusHandler, type CaptureRule, CaptureRuleSchema, type ChannelSettings, ChannelSettingsSchema, type ChannelType, ChannelTypeSchema, ChatChannel, type ChatChannelConfig, type CintelParticipant, CintelParticipantSchema, type Communication, type CommunicationContent, CommunicationContentSchema, type CommunicationParticipant, CommunicationParticipantSchema, CommunicationSchema, type ConversationAddress, ConversationAddressSchema, ConversationClient, type ConversationConfiguration, ConversationConfigurationSchema, type ConversationEndedCallback, type ConversationGroupingType, ConversationGroupingTypeSchema, type ConversationId, type ConversationIntelligenceConfig, ConversationIntelligenceConfigSchema, type ConversationParticipant, ConversationParticipantSchema, type ConversationRelayAttributes, ConversationRelayAttributesSchema, type ConversationRelayCallbackPayload, ConversationRelayCallbackPayloadSchema, type ConversationRelayConfig, ConversationRelayConfigSchema, type ConversationResponse, ConversationResponseSchema, type ConversationSession, ConversationSessionSchema, type ConversationSummaryItem, ConversationSummaryItemSchema, type ConversationWebhookPayload, type CreateConversationSummariesResponse, CreateConversationSummariesResponseSchema, type CreateObservationResponse, CreateObservationResponseSchema, type CreateObservationsRequest, CreateObservationsRequestSchema, type CustomParameters, CustomParametersSchema, type AgentSpeakingEvent, type AgentSpeakingHandler, type AgentSpeakingMessage, AgentSpeakingMessageSchema, type ClientSpeakingEvent, type ClientSpeakingHandler, type ClientSpeakingMessage, ClientSpeakingMessageSchema, type DtmfEvent, type DtmfHandler, type DtmfMessage, DtmfMessageSchema, EMPTY_MEMORY_RESPONSE, EnvironmentVariables, type ExecutionDetails, ExecutionDetailsSchema, type HandoffPayload, HandoffPayloadSchema, type HandoffResult, type InboundCallTwimlHandler, type InitiateChatConversationOptions, type InitiateConversationResult, type InitiateMessagingConversationOptions, InitiateMessagingConversationOptionsSchema, type InitiateVoiceConversationOptions, InitiateVoiceConversationOptionsSchema, type InitiateVoiceConversationResult, type IntelligenceConfiguration, IntelligenceConfigurationSchema, type InterruptCallback, type InterruptMessage, InterruptMessageSchema, type InterruptMode, InterruptModeSchema, type JSONSchema, JSONSchemaSchema, type KnowledgeBase, KnowledgeBaseSchema, type KnowledgeBaseStatus, KnowledgeBaseStatusSchema, type KnowledgeChunkResult, KnowledgeChunkResultSchema, KnowledgeClient, type KnowledgeSearchResponse, KnowledgeSearchResponseSchema, type LanguageAttributes, LanguageAttributesSchema, type LanguageConfig, LanguageConfigSchema, type ListCommunicationsResponse, ListCommunicationsResponseSchema, type ListConversationsResponse, ListConversationsResponseSchema, type ListParticipantsResponse, ListParticipantsResponseSchema, type Logger, type MemoryChannelType, MemoryChannelTypeSchema, MemoryClient, type MemoryCommunication, type MemoryCommunicationContent, MemoryCommunicationContentSchema, MemoryCommunicationSchema, type MemoryDeliveryStatus, MemoryDeliveryStatusSchema, type MemoryMode, MemoryModeSchema, type MemoryParticipant, MemoryParticipantSchema, type MemoryParticipantType, MemoryParticipantTypeSchema, MemoryPromptBuilder, type MemoryRetrievalRequest, MemoryRetrievalRequestSchema, type MemoryRetrievalResponse, MemoryRetrievalResponseSchema, type MessageDirection, MessageDirectionSchema, type MessageReadyCallback, MessagingChannel, type MessagingChannelConfig, type MessagingChannelEvents, type ObservationCreateRequest, ObservationCreateRequestSchema, type ObservationInfo, ObservationInfoSchema, type OpenAITool, OpenAIToolSchema, type Operator, type OperatorProcessingResult, OperatorProcessingResultSchema, type OperatorResult, type OperatorResultEvent, OperatorResultEventSchema, OperatorResultProcessor, OperatorResultSchema, OperatorSchema, type ParticipantAddress, ParticipantAddressSchema, type ParticipantAddressType, ParticipantAddressTypeSchema, type ParticipantId, type PendingHandoffData, PendingHandoffDataSchema, type Profile, type ProfileId, type ProfileLookupResponse, ProfileLookupResponseSchema, type ProfileResponse, ProfileResponseSchema, type PromptMessage, PromptMessageSchema, RCSChannel, type RecordingEvent, RecordingEventSchema, type RecordingHandler, SMSChannel, type SendMessageActionPayload, SendMessageActionPayloadSchema, type SendMessageActionRequest, SendMessageActionRequestSchema, type SessionInfo, SessionInfoSchema, type SessionMessage, SessionMessageSchema, type SetupMessage, SetupMessageSchema, type StatusCallback, StatusCallbackSchema, type StatusTimeouts, StatusTimeoutsSchema, type StreamTask, type SummaryInfo, SummaryInfoSchema, TAC, type TACChannelType, TACChannelTypeSchema, type TACCommunication, type TACCommunicationAuthor, TACCommunicationAuthorSchema, type TACCommunicationContent, TACCommunicationContentSchema, TACCommunicationSchema, TACConfig, type TACConfigData, TACConfigSchema, type TACDeliveryStatus, TACDeliveryStatusSchema, TACMemoryResponse, type TACOptions, type TACParticipantType, TACParticipantTypeSchema, TACServer, type TACServerConfig, TACTool, type TextTokenMessage, TextTokenMessageSchema, type ToolContext, type ToolExecutionResult, ToolExecutionResultSchema, type ToolFunction, type Transcription, TranscriptionSchema, type TranscriptionWord, TranscriptionWordSchema, type TwiMLOptions, TwiMLOptionsSchema, type TwiMLRequest, TwiMLRequestSchema, type TwilioMemoryConfig, TwilioMemoryConfigSchema, type TypedCallOptions, VoiceChannel, type VoiceChannelConfig, type VoiceChannelEvents, type WebSocketMessage, WebSocketMessageSchema, WhatsAppChannel, type _CallsCreateDriftGuards, type _SDKDriftGuards, amdEventFromForm, buildHandoffPayload, callOptionsToCreateParams, callStatusEventFromForm, createKnowledgeSearchTool, createKnowledgeSearchToolAsync, createKnowledgeTools, createLogger, createMemoryRetrievalTool, createMemoryTools, createMessagingTools, createSendMessageTool, createStudioHandoffTool, defineTool, isConversationId, isParticipantId, isProfileId, maskAddress, maskEmail, maskPhone, postStudioHandoff, recordingEventFromForm, redactTwimlParameters, scrubObject, scrubPii, studioExecutionsUrl, studioVoiceHandoffUrl, twiMLRequestFromForm };
+diff --git a/node_modules/twilio-agent-connect/dist/index.js b/node_modules/twilio-agent-connect/dist/index.js
+index 7577b9f..4b322c2 100644
+--- a/node_modules/twilio-agent-connect/dist/index.js
++++ b/node_modules/twilio-agent-connect/dist/index.js
+@@ -774,11 +774,25 @@ var DtmfMessageSchema = z.object({
+   /** The key pressed: `0`-`9`, `*`, `#`, or `A`-`D`. */
+   digit: z.string()
+ });
++/** ConversationRelay speaker-events: agent TTS start/stop. */
++var AgentSpeakingMessageSchema = z.object({
++  type: z.literal("agentSpeaking"),
++  /** Typically "on" | "off" when TTS starts/stops. */
++  value: z.string()
++});
++/** ConversationRelay speaker-events: caller speech start/stop. */
++var ClientSpeakingMessageSchema = z.object({
++  type: z.literal("clientSpeaking"),
++  /** Typically "on" | "off". */
++  value: z.string()
++});
+ var WebSocketMessageSchema = z.union([
+   SetupMessageSchema,
+   PromptMessageSchema,
+   InterruptMessageSchema,
+-  DtmfMessageSchema
++  DtmfMessageSchema,
++  AgentSpeakingMessageSchema,
++  ClientSpeakingMessageSchema
+ ]);
+ var TextTokenMessageSchema = z.object({
+   type: z.literal("text"),
+@@ -4835,6 +4849,12 @@ var VoiceChannel = class _VoiceChannel extends BaseChannel {
+   onDtmf(callback) {
+     this.voiceCallbacks.onDtmf = callback;
+   }
++  onAgentSpeaking(callback) {
++    this.voiceCallbacks.onAgentSpeaking = callback;
++  }
++  onClientSpeaking(callback) {
++    this.voiceCallbacks.onClientSpeaking = callback;
++  }
+   /**
+    * Resolve the public WebSocket URL from `TACConfig.voicePublicDomain` +
+    * `TACConfig.voiceWebsocketPath`. Throws if `voicePublicDomain` isn't set.
+@@ -4889,6 +4909,12 @@ var VoiceChannel = class _VoiceChannel extends BaseChannel {
+       case "dtmf":
+         this.voiceCallbacks.onDtmf = callback;
+         break;
++      case "agentSpeaking":
++        this.voiceCallbacks.onAgentSpeaking = callback;
++        break;
++      case "clientSpeaking":
++        this.voiceCallbacks.onClientSpeaking = callback;
++        break;
+       case "webSocketConnected":
+         this.voiceCallbacks.onWebSocketConnected = callback;
+         break;
+@@ -5091,10 +5117,24 @@ var VoiceChannel = class _VoiceChannel extends BaseChannel {
+       (async () => {
+         try {
+           const messageData = JSON.parse(data.toString());
++          // ConversationRelay wraps speaker events in an outer envelope of the
++          // shape {type: "info", name: "agentSpeaking"|"clientSpeaking", value: "on"|"off"}.
++          // The Zod union at WebSocketMessageSchema expects the flat shape
++          // {type: "agentSpeaking"|"clientSpeaking", value: "..."}, so unwrap
++          // the envelope here before validation.
++          if (
++            messageData &&
++            messageData.type === "info" &&
++            (messageData.name === "agentSpeaking" || messageData.name === "clientSpeaking")
++          ) {
++            messageData.type = messageData.name;
++            delete messageData.name;
++          }
+           const result = WebSocketMessageSchema.safeParse(messageData);
+           if (!result.success) {
+             this.logger.debug(
+               {
++                raw_message: messageData,
+                 validation_errors: result.error.issues.map((issue) => ({
+                   path: issue.path.join("."),
+                   message: issue.message
+@@ -5157,6 +5197,28 @@ var VoiceChannel = class _VoiceChannel extends BaseChannel {
+               }
+               await this.handleDtmfMessage(conversationId, callSid, message);
+               break;
++            case "agentSpeaking":
++              try {
++                await ensureConversation();
++              } catch (err) {
++                this.logger.warn(
++                  { err, call_sid: callSid },
++                  "Conversation initialization failed on agentSpeaking, delivering event without a conversation"
++                );
++              }
++              await this.handleAgentSpeakingMessage(conversationId, callSid, message);
++              break;
++            case "clientSpeaking":
++              try {
++                await ensureConversation();
++              } catch (err) {
++                this.logger.warn(
++                  { err, call_sid: callSid },
++                  "Conversation initialization failed on clientSpeaking, delivering event without a conversation"
++                );
++              }
++              await this.handleClientSpeakingMessage(conversationId, callSid, message);
++              break;
+             default:
+               this.logger.debug(
+                 {
+@@ -5279,6 +5341,40 @@ var VoiceChannel = class _VoiceChannel extends BaseChannel {
+       ...session !== void 0 && { session }
+     });
+   }
++  async handleAgentSpeakingMessage(conversationId, callSid, message) {
++    const { value } = message;
++    this.logger.debug(
++      { conversation_id: conversationId, call_sid: callSid, value },
++      "Agent speaking event"
++    );
++    if (!this.voiceCallbacks.onAgentSpeaking) {
++      return;
++    }
++    const session = conversationId ? this.getConversationSession(conversationId) : void 0;
++    await this.voiceCallbacks.onAgentSpeaking({
++      conversationId: conversationId ?? void 0,
++      callSid: callSid ?? void 0,
++      value,
++      ...session !== void 0 && { session }
++    });
++  }
++  async handleClientSpeakingMessage(conversationId, callSid, message) {
++    const { value } = message;
++    this.logger.debug(
++      { conversation_id: conversationId, call_sid: callSid, value },
++      "Client speaking event"
++    );
++    if (!this.voiceCallbacks.onClientSpeaking) {
++      return;
++    }
++    const session = conversationId ? this.getConversationSession(conversationId) : void 0;
++    await this.voiceCallbacks.onClientSpeaking({
++      conversationId: conversationId ?? void 0,
++      callSid: callSid ?? void 0,
++      value,
++      ...session !== void 0 && { session }
++    });
++  }
+   /**
+    * Handle WebSocket disconnection. In orchestrated mode the conversation stays
+    * tracked until the CLOSED webhook (so a follow-up call can reuse it); in
