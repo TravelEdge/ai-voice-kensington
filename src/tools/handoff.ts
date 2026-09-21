@@ -8,6 +8,8 @@ import {
   HandoffPayload
 } from 'twilio-agent-connect';
 
+import { purgeWatchdogState } from '../watchdog.js';
+
 export const HANDOFF: Anthropic.Tool = {
   name: 'handoff',
   description: 'Hand off the conversation to a human agent by enqueuing the call into a specific TaskRouter workflow. Use this when we have collected sufficient information and are ready to transfer the call.',
@@ -134,6 +136,12 @@ export const executeHandoff = async (
         handoffData: JSON.stringify(payload),
       };
       session.pendingHandoffData = pending;
+
+      // The moment we commit to transferring, cancel any pending silence
+      // watchdog timer for this conversation. Otherwise the timer keeps
+      // counting after CR tears down the WebSocket, then fires an injection
+      // into a dead session ("No active WebSocket connection...").
+      purgeWatchdogState(String(session.conversationId));
     }
 
     return 'handoff_initiated';

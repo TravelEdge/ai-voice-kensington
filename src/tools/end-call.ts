@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ConversationSession, PendingHandoffData } from 'twilio-agent-connect';
 import { sessionLog, isLogEnabled } from '../logger.js';
+import { purgeWatchdogState } from '../watchdog.js';
 
 /**
  * Anthropic tool declaration for `end_call`. Signals that the active
@@ -56,6 +57,11 @@ export const executeEndCall = async (
     handoffData: JSON.stringify(payload),
   };
   session.pendingHandoffData = pending;
+
+  // Kill any pending silence watchdog timer for this conversation. Once the
+  // farewell has been spoken and CR closes the session, the timer would
+  // otherwise fire against a dead WebSocket and log a spurious error.
+  purgeWatchdogState(String(session.conversationId));
 
   if (isLogEnabled('HANDOFF_LIFECYCLE')) {
     sessionLog(String(session.conversationId)).info(
