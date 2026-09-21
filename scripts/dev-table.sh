@@ -29,7 +29,14 @@ LOG_FORMAT=json NODE_ENV=development NODE_OPTIONS='--disable-warning=FSTDEP023' 
         elif .msg == "AGENT_RESPONSE" then .response
         elif .msg == "CUSTOMER_INPUT" then .input
         elif .msg == "INTENT_CHANGE"  then ((.description // "") + " : " + (.intent // ""))
-        elif .msg == "CUSTOM_ROUTE"   then ((.route // "") + "   " + (.description // ""))
+        elif .msg == "CUSTOM_ROUTE"   then (
+          (.route // "")
+          + "   "
+          + (.description // "")
+          + (if (.query // {} | length) > 0
+             then " (" + (.query | to_entries | map(.key + "=" + (.value | tostring)) | join(", ")) + ")"
+             else "" end)
+        )
         elif .msg == "INTERRUPT"      then ((.durationUntilInterruptMs // 0 | tostring) + "ms" + (if (.utterance // "") != "" then " — " + .utterance else "" end))
         else "" end
       ) | tostring | gsub("\n"; " ")
