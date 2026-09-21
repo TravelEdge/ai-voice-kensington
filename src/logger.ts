@@ -226,6 +226,10 @@ export function deepAutoParse(value: unknown): unknown {
 // Available flags (see docs in .env.example):
 //   TOOLS_CALL          per-tool-invocation log with input + start time
 //   TOOLS_RESULT        per-tool-result log with the full parsed result + duration
+//   TOOL_ERROR          warn-level log fired when a tool returns an error-shaped
+//                       string ("Error:..." / "Failed..."). Independent of
+//                       TOOLS_RESULT — errors show up even if TOOLS_RESULT is
+//                       suppressed.
 //   CLAUDE_API          per-Claude-attempt log with model + requestTime
 //   CLAUDE_API_PAYLOAD  MODIFIER — when enabled, CLAUDE_API + AGENT_RESPONSE
 //                       records include the full request payload
@@ -252,6 +256,7 @@ const disabledFlags = new Set(
 export type LogFlag =
   | 'TOOLS_CALL'
   | 'TOOLS_RESULT'
+  | 'TOOL_ERROR'
   | 'CLAUDE_API'
   | 'CLAUDE_API_PAYLOAD'
   | 'CUSTOMER_INPUT'

@@ -167,6 +167,18 @@ async function fallbackToLiveAgent(
 // embedded structures so pino-pretty renders them as trees instead of
 // escaped-newline blobs.
 
+// Heuristic for "this tool return string looks like a failure." Tools in this
+// codebase surface errors by returning strings that start with "Error:" or
+// "Failed" (their return type is `string`, not `throw`) so Claude can decide
+// how to react without breaking the tool loop. We use this to emit a separate
+// TOOL_ERROR log so silent tool failures surface in dev-table + prod logs.
+// Case-insensitive on the leading token; trims first to survive stray
+// whitespace.
+const looksLikeToolError = (result: string): boolean => {
+  const trimmed = result.trimStart();
+  return /^(Error[:\s]|Failed[:\s])/i.test(trimmed);
+};
+
 // Public entry point. Establishes the AsyncLocalStorage session context (one
 // per top-level customer utterance) and emits the aggregate AGENT_RESPONSE log
 // with timings once the recursive worker returns. Recursive re-entry from
@@ -358,6 +370,20 @@ async function handleMessageInternal(
               sessionLog().info(
                 { tool: toolUse.name, requestTime, result: deepAutoParse(result) },
                 'TOOL_RESULT',
+              );
+            }
+
+            // Tools in this codebase return failure as an error-shaped STRING
+            // (rather than throwing) so Claude can decide how to react. That's
+            // deliberate — retries usually re-fail the same way — but it also
+            // means silent bugs (like the Memory write that never landed) go
+            // unnoticed because Claude treats the string as a normal result.
+            // Surface those as a separate warn-level TOOL_ERROR so they show
+            // up in dev-table + prod logs without needing to grep raw JSON.
+            if (isLogEnabled('TOOL_ERROR') && looksLikeToolError(result)) {
+              sessionLog().warn(
+                { tool: toolUse.name, requestTime, result: deepAutoParse(result) },
+                'TOOL_ERROR',
               );
             }
 

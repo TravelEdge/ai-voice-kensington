@@ -28,8 +28,12 @@ interface Profile {
   url: string;
 }
 
+// Response shape for POST /v1/Stores/{storeId}/Profiles/Lookup — verified
+// against the Twilio Memory API reference. `profiles` is an array of profile
+// IDs (strings), NOT an array of full Profile objects.
 interface ProfileLookupResponse {
-  profiles: Profile[];
+  normalizedValue: string;
+  profiles: string[];
 }
 
 const MEMORY_API_BASE = "https://memory.twilio.com/v1";
@@ -119,13 +123,18 @@ export async function getProfile(
 }
 
 /**
- * Look up profile by phone number, email, or other identifier
+ * Look up profile by phone number, email, or other identifier configured in
+ * the store's identity resolution settings. Hits
+ * POST /v1/Stores/{storeId}/Profiles/Lookup with { idType, value }.
+ * Returns the first matching profile ID (a string) or null when no match.
+ * (This endpoint returns profile IDs, not full profile objects — if you need
+ * the full profile, follow up with getProfile().)
  */
 export async function lookupProfile(
   memorySid: string,
   idType: "phone" | "email",
   value: string,
-): Promise<Profile | null> {
+): Promise<string | null> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
 
@@ -141,7 +150,12 @@ export async function lookupProfile(
   }
 
   try {
-    const url = `${MEMORY_API_BASE}/Services/${memorySid}/Profiles/Lookup`;
+    // NOTE: the endpoint lives under /Stores/, NOT /Services/. Twilio's
+    // Memory REST API uses the /Stores/{storeId}/... prefix for every profile-
+    // related operation (get, patch, and this lookup). The previous
+    // /Services/... path always 404'd, which is what silently broke the
+    // trait-write fallback in this codebase.
+    const url = `${MEMORY_API_BASE}/Stores/${memorySid}/Profiles/Lookup`;
     const auth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
 
     const response = await fetch(url, {
@@ -362,30 +376,72 @@ export const executeUpdateNewLeadTraits = async (
   tac: TAC,
   session: ConversationSession,
 ): Promise<string> => {
-  let memory: TACMemoryResponse | undefined;
+  const memorySid = tac.getMemoryStoreId();
+  if (!memorySid) {
+    return 'Error: cannot update NewLead traits — TAC memory store is not configured.';
+  }
+
+  // ProfileId resolution has two paths, tried in order:
+  //
+  //   1. tac.retrieveMemory(session) → extractCustomerProfileId — reads
+  //      communications[].author for a CUSTOMER entry with a profileId. This
+  //      is fast but relies on Twilio Memory having ingested the current
+  //      call's customer communications, which does NOT happen reliably
+  //      during the NEW_LEAD leg (ingestion is async and the conversation
+  //      is still ACTIVE). Silently returning "no profileId" here meant
+  //      every NEW_LEAD trait update was a no-op, and downstream STACK_CALL
+  //      read ancient prior-session values.
+  //
+  //   2. Fallback: lookupProfile(memorySid, 'phone', session.authorInfo.address).
+  //      Directly POSTs to Memory's /Profiles/Lookup endpoint keyed by the
+  //      caller's E.164 phone number. This works even when the current
+  //      conversation's communications haven't been ingested — the profile
+  //      itself exists (Memory creates one automatically on first contact).
+  //
+  // We try (1) first because when it succeeds it's a single API call we
+  // already made; (2) is one extra POST.
+  let profileId: string | undefined;
   try {
-    memory = await tac.retrieveMemory(session);
+    const memory = await tac.retrieveMemory(session);
+    profileId = extractCustomerProfileId(memory);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    contextLog().error(
+    contextLog().warn(
       {
         backend: 'ConversationMemory',
         err: err instanceof Error ? err.message : String(err),
-        description: 'Failed to retrieve memory for trait update',
+        description: 'retrieveMemory failed during trait-update profileId resolution — falling back to phone lookup',
       },
       'MEMORY_ERROR',
     );
-    return `Error: failed to load memory for profile lookup: ${message}`;
   }
-
-  const profileId = extractCustomerProfileId(memory);
-  const memorySid = tac.getMemoryStoreId();
 
   if (!profileId) {
-    return 'Error: cannot update NewLead traits — no customer profile ID resolved from the memory response.';
+    const phone = session.authorInfo?.address;
+    if (phone) {
+      // lookupProfile now returns the profileId string directly (was Profile
+      // before — the Memory Lookup endpoint only returns IDs, not full
+      // profiles).
+      const resolved = await lookupProfile(memorySid, 'phone', phone);
+      if (resolved) {
+        profileId = resolved;
+        contextLog().info(
+          { backend: 'ConversationMemory', phone, profileId, description: 'Resolved profileId via phone-lookup fallback' },
+          'MEMORY_ERROR',
+        );
+      }
+    }
   }
-  if (!memorySid) {
-    return 'Error: cannot update NewLead traits — TAC memory store is not configured.';
+
+  if (!profileId) {
+    contextLog().error(
+      {
+        backend: 'ConversationMemory',
+        phone: session.authorInfo?.address,
+        description: 'Could not resolve customer profileId via retrieveMemory OR phone lookup — trait update abandoned',
+      },
+      'MEMORY_ERROR',
+    );
+    return 'Error: cannot update NewLead traits — no customer profile ID resolved from the memory response.';
   }
 
   // Preserve the incoming primitive type. The Memory API validates each trait

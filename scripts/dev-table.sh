@@ -29,20 +29,21 @@ LOG_FORMAT=json NODE_ENV=development NODE_OPTIONS='--disable-warning=FSTDEP023' 
   | jq -rR --unbuffered '
   . as $line
   | try (fromjson) catch empty
-  | select(.msg | IN("CUSTOM_ROUTE","CUSTOMER_INPUT","INTENT_CHANGE","AGENT_RESPONSE","CLAUDE_API","INTERRUPT","TOOL_CALL","TOOL_RESULT","CONVERSATION_ENDED"))
+  | select(.msg | IN("CUSTOM_ROUTE","CUSTOMER_INPUT","INTENT_CHANGE","AGENT_RESPONSE","CLAUDE_API","INTERRUPT","TOOL_CALL","TOOL_RESULT","TOOL_ERROR","CONVERSATION_ENDED"))
   | [
       (.time / 1000 | strflocaltime("%H:%M:%S")),
       .msg,
       (.callSid // "-"),
       (
         # MS column: pick the right timing field per category.
-        if   .msg == "AGENT_RESPONSE"                        then ((.customerToAgentResponseTime // "") | tostring)
-        elif .msg == "TOOL_RESULT" or .msg == "CLAUDE_API"   then ((.requestTime // "") | tostring)
+        if   .msg == "AGENT_RESPONSE"                                              then ((.customerToAgentResponseTime // "") | tostring)
+        elif .msg == "TOOL_RESULT" or .msg == "TOOL_ERROR" or .msg == "CLAUDE_API" then ((.requestTime // "") | tostring)
         else "" end
       ),
       (
         if   .msg == "TOOL_CALL"      then .tool
         elif .msg == "TOOL_RESULT"    then .tool
+        elif .msg == "TOOL_ERROR"     then (.tool + " → " + ((.result // "") | tostring))
         elif .msg == "CLAUDE_API"     then .model
         elif .msg == "AGENT_RESPONSE" then .response
         elif .msg == "CUSTOMER_INPUT" then .input
@@ -71,6 +72,7 @@ LOG_FORMAT=json NODE_ENV=development NODE_OPTIONS='--disable-warning=FSTDEP023' 
     colors["CLAUDE_API"]         = "\033[96m"   # bright cyan
     colors["TOOL_CALL"]          = "\033[33m"   # yellow
     colors["TOOL_RESULT"]        = "\033[93m"   # bright yellow
+    colors["TOOL_ERROR"]         = "\033[91m"   # bright red
     colors["INTERRUPT"]          = "\033[31m"   # red
     colors["INTENT_CHANGE"]      = "\033[35m"   # magenta
     colors["CONVERSATION_ENDED"] = "\033[90m"   # gray
