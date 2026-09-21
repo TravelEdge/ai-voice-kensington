@@ -3,12 +3,30 @@
 # for a compact, colorized table view. Only session-relevant categories flow
 # through; TAC/Fastify internal chatter is dropped.
 #
+# `tee` splits the raw JSON stream — one copy goes to `logs/dev.log` (or
+# whatever LOG_FILE is set to), one copy flows into the table renderer. That
+# way the table stays scannable in the terminal, and full detail (TAC
+# internals, Fastify warnings, dropped-from-table categories, big Claude
+# payloads) is preserved on disk for post-hoc `jq` / `less` inspection.
+#
 # Usage: `npm run dev:table`
+# Post-mortem: `cat logs/dev.log | jq 'select(.msg == "CLAUDE_API")'` or similar
+# Live tail (in a second terminal): `tail -f logs/dev.log | jq`
 # Requires: jq (brew install jq)
 
 set -euo pipefail
 
-LOG_FORMAT=json NODE_ENV=development NODE_OPTIONS='--disable-warning=FSTDEP023' tsx src/index.ts | jq -rR --unbuffered '
+# File location — override with `LOG_FILE=... npm run dev:table` for a
+# timestamped or per-run log, e.g. `LOG_FILE=logs/dev-$(date +%s).log`.
+LOG_FILE="${LOG_FILE:-logs/dev.log}"
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# Loud banner so the operator knows where to look for the full log.
+printf '\033[90m→ Full JSON log streaming to %s (post-mortem: cat %s | jq)\033[0m\n\n' "$LOG_FILE" "$LOG_FILE"
+
+LOG_FORMAT=json NODE_ENV=development NODE_OPTIONS='--disable-warning=FSTDEP023' tsx src/index.ts \
+  | tee "$LOG_FILE" \
+  | jq -rR --unbuffered '
   . as $line
   | try (fromjson) catch empty
   | select(.msg | IN("CUSTOM_ROUTE","CUSTOMER_INPUT","INTENT_CHANGE","AGENT_RESPONSE","CLAUDE_API","INTERRUPT","TOOL_CALL","TOOL_RESULT","CONVERSATION_ENDED"))

@@ -174,6 +174,31 @@ The pipeline lives in [`scripts/dev-table.sh`](scripts/dev-table.sh) — tweak t
 
 **Requires `jq` on PATH.** Install with `brew install jq`.
 
+### Full-detail log file
+
+`dev:table` also writes the raw JSON stream to **`logs/dev.log`** (via `tee`), so any details dropped from the table view — TAC internals, Fastify request logs, full Claude payloads, everything — are preserved on disk. The path is announced in a gray banner at startup.
+
+The file is overwritten on each `dev:table` invocation. Override the destination if you want a per-run archive:
+
+```bash
+LOG_FILE=logs/dev-$(date +%s).log npm run dev:table
+```
+
+Typical post-mortem workflows:
+
+```bash
+# Just the Claude call records
+cat logs/dev.log | jq 'select(.msg == "CLAUDE_API")'
+
+# Everything for a specific conversation
+cat logs/dev.log | jq 'select(.conversationId == "conv_...")'
+
+# Live tail in another terminal while the table streams in your main one
+tail -f logs/dev.log | jq
+```
+
+`logs/` is gitignored.
+
 ## How it works
 
 1. An inbound call or SMS arrives at your Twilio number.
