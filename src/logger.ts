@@ -42,13 +42,11 @@ interface SessionStore {
   conversationId: string;
   callSid?: string;
   log: Logger;
+  // performance.now() at runInSession entry — i.e. the moment TAC delivered
+  // the customer's transcribed prompt to onMessageReady and handleMessage
+  // opened its ALS scope. Read once at end-of-turn by the AGENT_RESPONSE log
+  // to compute customerToAgentResponseTime.
   startedAt: number;
-  // Source of `startedAt`: `'interrupt'` means the caller barged in mid-TTS
-  // and the response-time clock was reset to that moment; `'customer-input'`
-  // means no pending interrupt existed and the timer started at handleMessage
-  // entry. Surfaced on AGENT_RESPONSE so the interrupt-reset behaviour is
-  // visible in the logs.
-  startedFrom: 'interrupt' | 'customer-input';
   claudeApiCalls: ClaudeApiCall[];
 }
 
@@ -67,19 +65,12 @@ export interface ClaudeApiCall {
 const sessionContext = new AsyncLocalStorage<SessionStore>();
 
 // Side-map from conversationId to CallSid. Populated by handleMessage on entry
-// so event handlers that fire OUTSIDE the ALS scope (interrupt, teardown) can
-// still emit logs tagged with the right CallSid. A reverse map is maintained
-// alongside so HTTP routes (e.g. /enqueue-or-end-call) that only receive
-// CallSid can resolve back to the conversationId for cleanup.
+// so event handlers that fire OUTSIDE the ALS scope (interrupt handler, HTTP
+// route handlers, teardown) can still emit logs tagged with the right CallSid.
+// A reverse map is maintained alongside so HTTP routes (e.g. /enqueue-completed)
+// that only receive CallSid can resolve back to the conversationId for cleanup.
 const sessionCallSids = new Map<string, string>();
 const callSidToConversationIds = new Map<string, string>();
-
-// Side-map for interrupt timestamps. When onInterrupt fires (outside the ALS
-// scope), we record performance.now() here — the next handleMessage invocation
-// consumes it as its startedAt, so customerToAgentResponseTime is measured
-// from the barge-in moment (when the caller started speaking) rather than
-// from when the ASR-transcribed prompt finally landed on onMessageReady.
-const interruptTimestamps = new Map<string, number>();
 
 export function registerSessionCallSid(
   conversationId: string,
@@ -98,29 +89,24 @@ export function lookupConversationIdByCallSid(callSid: string): string | undefin
   return callSidToConversationIds.get(callSid);
 }
 
-export function recordInterruptTimestamp(conversationId: string): void {
-  interruptTimestamps.set(conversationId, performance.now());
-}
-
-function consumeInterruptTimestamp(conversationId: string): number | undefined {
-  const ts = interruptTimestamps.get(conversationId);
-  if (ts !== undefined) interruptTimestamps.delete(conversationId);
-  return ts;
-}
-
 // Called from clearConversation when the CR session ends — evicts per-call
 // state so a subsequent call on the same conversationId (or memory pressure)
 // isn't polluted by stale entries.
 export function purgeSessionState(conversationId: string): void {
   const callSid = sessionCallSids.get(conversationId);
   sessionCallSids.delete(conversationId);
-  interruptTimestamps.delete(conversationId);
   if (callSid) callSidToConversationIds.delete(callSid);
 }
 
-// Idempotent — if we're already inside a session (recursive handleMessage from
-// the intent-detection path), keep using the existing store so accumulated
-// timings survive the re-entry. Otherwise start a fresh store.
+// Opens the ALS scope for one customer turn. `startedAt` is always
+// performance.now() at entry, so customerToAgentResponseTime measures from
+// prompt-arrival to agent-response.
+//
+// Idempotent safety belt: if we're somehow already inside a session (e.g. a
+// future refactor introduces a recursive handleMessage → handleMessage call),
+// the outer store is preserved rather than nesting. Not strictly required
+// today because handleMessageInternal is the recursive worker, but the check
+// is two lines and prevents an easy footgun.
 export function runInSession<T>(
   conversationId: string,
   callSid: string | undefined,
@@ -129,14 +115,6 @@ export function runInSession<T>(
   const existing = sessionContext.getStore();
   if (existing) return fn() as Promise<T>;
 
-  // If the caller just barged in on the AI, use the interrupt moment as the
-  // response-timer start — the caller has been "waiting" since then, not since
-  // ASR delivered the transcribed prompt.
-  const interruptedAt = consumeInterruptTimestamp(conversationId);
-  const startedAt = interruptedAt ?? performance.now();
-  const startedFrom: 'interrupt' | 'customer-input' =
-    interruptedAt !== undefined ? 'interrupt' : 'customer-input';
-
   const bindings: Record<string, unknown> = { type: 'session', conversationId };
   if (callSid) bindings.callSid = callSid;
 
@@ -144,8 +122,7 @@ export function runInSession<T>(
     conversationId,
     callSid,
     log: logger.child(bindings),
-    startedAt,
-    startedFrom,
+    startedAt: performance.now(),
     claudeApiCalls: [],
   };
   return sessionContext.run(store, fn);

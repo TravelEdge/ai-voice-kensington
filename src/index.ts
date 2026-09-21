@@ -34,7 +34,6 @@ import {
   logger,
   sessionLog,
   isLogEnabled,
-  recordInterruptTimestamp,
 } from './logger.js';
 
 
@@ -130,11 +129,6 @@ voiceChannel.on('setup', ({ callSid, from, customParameters }) => {
 // finish the interrupted thought.
 voiceChannel.on('interrupt', ({ conversationId, utteranceUntilInterrupt, durationUntilInterruptMs }) => {
   const convId = String(conversationId);
-
-  // Reset the response-time clock: the caller has been "waiting" since this
-  // moment (the barge-in), not since ASR later delivers the transcribed prompt.
-  // handleMessage's next invocation consumes this via runInSession.
-  recordInterruptTimestamp(convId);
 
   const history = histories.get(convId);
   if (!history || history.length === 0) return;
