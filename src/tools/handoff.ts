@@ -8,7 +8,7 @@ import {
   HandoffPayload
 } from 'twilio-agent-connect';
 
-import { purgeWatchdogState } from '../watchdog.js';
+import { disableWatchdog } from '../watchdog.js';
 
 export const HANDOFF: Anthropic.Tool = {
   name: 'handoff',
@@ -137,11 +137,13 @@ export const executeHandoff = async (
       };
       session.pendingHandoffData = pending;
 
-      // The moment we commit to transferring, cancel any pending silence
-      // watchdog timer for this conversation. Otherwise the timer keeps
-      // counting after CR tears down the WebSocket, then fires an injection
-      // into a dead session ("No active WebSocket connection...").
-      purgeWatchdogState(String(session.conversationId));
+      // The moment we commit to transferring, disable the silence watchdog
+      // for this conversation. disableWatchdog leaves an IDLE sentinel in
+      // the state map — a subsequent agentSpeaking:off (from the "connecting
+      // you now" farewell TTS) then finds IDLE and refuses to arm a new
+      // timer. Full teardown of the map entry happens later in
+      // clearConversationById via purgeWatchdogState.
+      disableWatchdog(String(session.conversationId));
     }
 
     return 'handoff_initiated';

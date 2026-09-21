@@ -105,18 +105,41 @@ export function armSilenceTimer(
 }
 
 // Called from clientSpeaking:on. Cancels any active timer and resets the
-// escalation to stage 0 — treating the caller as freshly engaged.
+// escalation to stage 0 — treating the caller as freshly engaged. If the
+// watchdog has been disabled (handoff / end_call terminal action already
+// fired), we intentionally do NOT re-arm the escalation: any last-second
+// caller speech during the outbound farewell TTS should not resurrect the
+// timer for a session that's about to die.
 export function cancelSilenceTimer(conversationId: string): void {
   const entry = state.get(conversationId);
   if (!entry) return;
   if (entry.timer) clearTimeout(entry.timer);
   entry.timer = undefined;
-  entry.nextStage = 'SILENCE_ONE';
+  if (entry.nextStage !== 'IDLE') {
+    entry.nextStage = 'SILENCE_ONE';
+  }
   state.set(conversationId, entry);
 }
 
-// Called from clearConversationById at teardown so any dangling timer is
-// swept and the map doesn't leak entries across calls.
+// Called from executeHandoff / executeEndCall — i.e. when a terminal action
+// has fired and the current session is being wound down but hasn't been
+// torn down yet (TTS still needs to play the farewell, CR still needs to
+// receive the WS "end" frame). We MUST keep an IDLE marker in the state
+// map — deleting it here would let the next agentSpeaking:off (from the
+// farewell TTS) re-create a fresh { nextStage: 'SILENCE_ONE' } entry and
+// arm the timer all over again. armSilenceTimer / cancelSilenceTimer both
+// respect the IDLE marker and refuse to re-arm.
+export function disableWatchdog(conversationId: string): void {
+  const entry = state.get(conversationId) ?? { nextStage: 'IDLE' as const };
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = undefined;
+  entry.nextStage = 'IDLE';
+  state.set(conversationId, entry);
+}
+
+// Called from clearConversationById at teardown so the IDLE marker (and any
+// dangling timer, though there should be none by this point) is swept and
+// the map doesn't leak entries across calls.
 export function purgeWatchdogState(conversationId: string): void {
   const entry = state.get(conversationId);
   if (entry?.timer) clearTimeout(entry.timer);
