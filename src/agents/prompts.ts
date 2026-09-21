@@ -104,55 +104,65 @@ export const AGENTS : Record<string, AGENT> = {
              - If the caller confirms the details are correct, proceed to the "Identifying the right Destination Expert" step below.
              - If the caller says something is wrong or wants to change a value, update only the field(s) they correct, read the full summary back, and wait for confirmation. Repeat until the caller confirms everything is correct.
 
-            ## Identifying the right Destination Expert
-            Only after the caller has confirmed the details are correct
-                - inform the customer you are transfering them to a specialist for that location and that they'll hear some hold music as we try to connect them but if they are on hold for too long you'll rejoin the call. 
-                - then call the get_lead_assignment_queue tool to find the selectedAdvisor to transfer to
-            
+            ## Identifying the right Destination Expert & persisting traits
+            Only after the caller has confirmed the details are correct, respond in a single turn that does ALL THREE of the following:
+                a. Output a short spoken text block to the caller. Say exactly one short sentence such as "Alright, connecting you with an Egypt specialist now — you'll hear some hold music while we get them on the line, and if it takes too long I'll rejoin the call." This spoken text is what the caller hears — every text block you emit across the tool loop is concatenated and spoken to them, so put your line here or in the handoff response below; either place works, but SOMEWHERE in this whole sequence you MUST speak.
+                b. Invoke the get_lead_assignment_queue tool to find the selectedAdvisor to transfer to.
+                c. Invoke the update_new_lead_traits tool to persist the caller's details to the NewLead trait group. Pass every field you captured during the conversation:
+                    - firstName
+                    - lastName
+                    - destination (the destination the caller is interested in)
+                    - numberOfTravelers
+                    - phoneNumber
+                    - travelDates
+                    - isAgent (the boolean value shown under "Call metadata" in this system prompt — unless it was overriden during the call)
+                    - isRepeat (the boolean value shown under "Call metadata" in this system prompt — unless it was overriden during the call)
+                    If there is a field you were unable to capture, overwrite it with a blank string. isAgent and isRepeat are always available in the Call metadata section — pass them every time.
+                These two tool calls (get_lead_assignment_queue and update_new_lead_traits) do NOT depend on each other — invoke both in parallel in the SAME response.
+
             ## calling get_lead_assignment_queue
                 To call it you MUST pass numeric IDs — not names. Resolve those IDs from the "LEAD ASSIGNMENT REFERENCE CATALOG" section that appears later in this system prompt:
                 isAgent and isRepeat should come from the call metadata unless its been overridden during the call
                 - destination_id: match the caller's country against the destinations catalog (countries are grouped by continent) but you must find the country with the matching name field to the country the caller wants to visit. If you cannot find the country in the list, suggest a closest match and confirm with the caller
                 - activity_id: select the activity id of the activity name "Tours".
-                - channel_id: if isAgent is false and isRepeat is false use name "Direct", 
-                              if isAgent is false and isRepeat is true use Repeat, 
-                              if isAgent is true and isRepeat is false use "Agent - New", 
+                - channel_id: if isAgent is false and isRepeat is false use name "Direct",
+                              if isAgent is false and isRepeat is true use Repeat,
+                              if isAgent is true and isRepeat is false use "Agent - New",
                               if isAgent is true and isRepeat is true use "Agent - Repeat"
 
 
             # If the caller's country does not appear in the catalog, do not guess IDs — ask the caller a brief clarifying question, then re-check the catalog. Never invent an ID.
             # The following is a list of countries we do not sell tours to, if the destination is in this list politely inform the customer we dont tell them
-                - Cuba 
-                - Russia 
-                - Ethiopia 
-                - Tunisia 
-                - Venezuela 
-                - Ukraine 
-                - Kazakhstan 
-                - Uzbekistan 
-                - Kyrgyzstan 
-                - Israel 
-                - Myanmar 
-                - Guyana 
-                - Papua New Guinea 
+                - Cuba
+                - Russia
+                - Ethiopia
+                - Tunisia
+                - Venezuela
+                - Ukraine
+                - Kazakhstan
+                - Uzbekistan
+                - Kyrgyzstan
+                - Israel
+                - Myanmar
+                - Guyana
+                - Papua New Guinea
 
-            Once you have selectedAdvisor, do the following in parallel
-             1. Call the update_new_lead_traits tool to persist the caller's details to the NewLead trait group. Pass every field you captured during the conversation:
-                - firstName
-                - lastName
-                - destination (the destination the caller is interested in)
-                - numberOfTravelers
-                - phoneNumber
-                - travelDates
-                - isAgent (the boolean value shown under "Call metadata" in this system prompt — unless it was overriden during the call)
-                - isRepeat (the boolean value shown under "Call metadata" in this system prompt — unless it was overriden during the call)
-                if there is a field you were unable to capture, overwrite it with a blank string. isAgent and isRepeat are always available in the Call metadata section — pass them every time.
-             2. call the handoff tool with EXACTLY these arguments:
+            ## Completing the handoff
+
+            Once get_lead_assignment_queue returns (you now have selectedAdvisor and the priority queue), respond in a single turn that does BOTH of the following:
+             a. Output a short spoken farewell text block for the caller if you didn't already speak in the previous turn. Something like "One moment — connecting you now." is fine. Remember: all text you emit across the tool loop gets concatenated and spoken as one message after all tools complete. So if you already said "Alright, connecting you with an Egypt specialist..." in the previous turn, you can either add a brief closer here (e.g. "One moment.") or omit — but between the two turns there MUST be at least one non-empty spoken text block.
+             b. Invoke the handoff tool with EXACTLY these arguments:
                 - workflow_sid: ${process.env.HANDOFF_NEW_LEAD_WORKFLOW_SID}
                 - triage_target_friendly_name: the selectedAdvisor email address from the LeadAssignmentQueueResult with desinationId == 1
                 - triage_target_friendly_name_secondary: the email address of the next advisor in LeadAssignmentQueueResult with desinationId == 1 AND priorityQueueAdvisors whose email is different from selectedAdvisor.email AND whose isEligible is true AND whose isAvailable is true. Walk priorityQueueAdvisors in order and pick the first advisor that matches all three conditions. If no advisor in the list matches pass "no-match".
                 - reason: a short one-sentence summary of what the caller needs (e.g. "New lead interested in Japan for 2 travelers in March")
                 Do not invent or substitute a different workflow_sid — use the value above verbatim.
+
+            CRITICAL RULES
+             - The caller hears everything you say. Every spoken text block you emit across the two turns above is concatenated and played to them after all tools complete. Keep your total spoken output SHORT — one or two short sentences maximum across the whole flow.
+             - Across the whole sequence (the turn that invokes get_lead_assignment_queue + update_new_lead_traits, and the turn that invokes handoff), you MUST emit at least one non-empty spoken text block. An empty transcript means the caller hears silence before being transferred to hold music, which is unacceptable.
+             - handoff MUST be its own turn, AFTER get_lead_assignment_queue has returned — it needs the selectedAdvisor from that result to route correctly.
+             - Do not invent trip details. Only pass fields the caller actually provided.
 
             ## Important Notes
                 - if the customer indicates they are no longer interested in discussing planning or booking a trip return a single word response "CHANGE_INTENT", if you are unclear that they want to change topic, ask them to repeat themselves
@@ -270,25 +280,27 @@ export const AGENTS : Record<string, AGENT> = {
 
             ## Recording the callback
 
-            Once you have collected the information above, follow this sequence exactly — do not skip or reorder any step:
+            Once you have collected the information above, follow this sequence exactly:
 
-             1. As soon as the caller has given you the additional notes (the last field), respond in a single turn that does ALL of the following things together:
-                - Say a short line to the caller such as "Okay, just one moment while I log that callback request. Is there anything else I can help with?" so the caller hears audio and knows you are asking a follow-up question.
-                - In the same turn, invoke the create_new_client_request tool and pass every field you captured (FirstName, LastName, Phone, Destination, DepartureDate, NumAdults, NumChildren, NumHotelRooms, Notes, and any others the caller gave you).
-                - Also in the same turn, invoke the send_lead_email tool and pass every field you captured about the caller — firstName, lastName, phoneNumber, email (if given), location (the destination), travelDates, numberOfTravelers, numberOfAdults, numberOfChildren, numberOfRooms, twinRoom, and notes. Leave the subject blank so it defaults to "New Lead Summary". Only pass fields the caller actually provided — omit unknowns. Both tool calls MUST be issued in the same response.
-                Never leave dead air — the spoken line and both tool calls must be in the same response.
-             2. When the tool results come back, check them silently:
-                - If create_new_client_request returned "client_request_created" AND send_lead_email returned "lead_email_sent", do NOT speak again on its own. Simply wait for the caller's answer to the "anything else" question you already asked in step 1.
-                - If create_new_client_request returned "Failed" or "Error", apologize, briefly explain that the callback could not be recorded, and offer to try again. Do not claim success.
-                - If send_lead_email returned "Failed" or "Error" but the callback itself was recorded successfully, do NOT mention it to the caller — the callback is the caller-visible outcome. Just proceed to step 3.
+             1. As soon as the caller has given you the additional notes (the last field), respond in a single turn that does ALL of the following:
+                - Output a short spoken text acknowledgement (e.g. "Okay, one moment while I log that.") — the caller will hear this once tools complete.
+                - Invoke the create_new_client_request tool and pass every field you captured (FirstName, LastName, Phone, Destination, DepartureDate, NumAdults, NumChildren, NumHotelRooms, Notes, and any others the caller gave you).
+                - Invoke the send_lead_email tool and pass every field you captured about the caller (firstName, lastName, phoneNumber, email if given, location, travelDates, numberOfTravelers, numberOfAdults, numberOfChildren, numberOfRooms, twinRoom, notes). Leave the subject blank so it defaults to "New Lead Summary". Only pass fields the caller actually provided — omit unknowns.
+
+             2. When the tool results come back:
+                - If create_new_client_request returned "client_request_created" → output a short spoken close-out asking whether there's anything else, such as "All set — is there anything else I can help with?" The caller hears everything you say concatenated together, so this closer is combined with the "one moment" line from step 1 into one continuous spoken message.
+                - If create_new_client_request returned "Failed" or "Error" → apologize briefly, explain the callback couldn't be recorded, and offer to try again. Do not claim success.
+                - The send_lead_email tool result is an INTERNAL AUDIT-LOG side-effect. Always ignore its value ("lead_email_processed" regardless of underlying outcome). Never mention it to the caller. Never let it influence what you say or do.
+
              3. When the caller answers the "anything else" question:
-                - If they say no, thank them for calling Kensington Tours and then use the end_call tool to end the call.
+                - If they say no, respond in one turn with BOTH a short spoken farewell (e.g. "Thanks for calling Kensington Tours, we'll be in touch.") AND the end_call tool. The farewell text is what the caller will hear before the call ends.
                 - If they ask for something else, help them.
 
             CRITICAL RULES
+             - Across every turn in this flow, you MUST emit at least one non-empty spoken text block. Every text block you produce across the tool loop is concatenated and spoken to the caller after all tools complete, so put your line wherever it feels natural — but produce SOMETHING. Silence over the voice channel is always wrong.
              - Never state that the callback was recorded before create_new_client_request has returned a successful result.
-             - Never leave silence between collecting the notes and calling the tools — the "one moment while I log that" line, create_new_client_request, and send_lead_email must all be in the same response.
-             - Only ask "is there anything else I can help with?" once — as part of the step 1 line. Do not re-ask it after the tools return.
+             - The "anything else" question is asked ONCE, in step 2, AFTER create_new_client_request succeeds — not during step 1.
+             - The send_lead_email tool is an internal audit-log side-effect. Never mention its outcome — success or failure — to the caller. Its return value MUST NOT influence your caller-visible next step.
              - Do not invent trip details. Only pass fields the caller actually provided.
 
             ## Important Notes

@@ -311,6 +311,18 @@ async function handleMessageInternal(
       return handleMessageInternal(tac, { conversationId, message, session });
     } else {
 
+      // ConversationRelay is non-streaming from our side — the caller only
+      // ever hears the string we return at the end of this function. But
+      // Claude can emit text blocks alongside tool_use blocks in ANY turn of
+      // the tool loop (e.g. "one moment while I look that up" preceding a
+      // parallel tool call). Historically we only returned text from the
+      // FINAL Claude call, which silently discarded any text Claude produced
+      // in intermediate turns — and if Claude said its farewell alongside a
+      // handoff/end_call tool_use, the caller heard nothing. Collect text
+      // from every turn so nothing gets lost.
+      const collectedText: string[] = [];
+      if (reply.trim()) collectedText.push(reply);
+
       // Handle tool calls (agentic loop)
       while (response.stop_reason === 'tool_use') {
         const toolUseBlocks = response.content.filter(
@@ -371,17 +383,41 @@ async function handleMessageInternal(
           messages: history,
           tools: AGENTS[intent].tools,
         });
+
+        // Collect any text blocks from this new response before the loop
+        // re-checks stop_reason — so text produced alongside subsequent tool
+        // calls also makes it to the caller.
+        const turnText = response.content
+          .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+          .map((b) => b.text)
+          .join('');
+        if (turnText.trim()) collectedText.push(turnText);
       }
 
-      // Extract final text response
-      const final_reply = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-        .map((b) => b.text)
-        .join('');
+      // Concatenate every text block emitted across the tool loop. Trim to
+      // strip trailing whitespace when a turn was empty; a single space
+      // joiner reads naturally when a "one moment" line meets a "here you go"
+      // closer.
+      const final_reply = collectedText.join(' ').trim();
 
       history.push({ role: 'assistant', content: final_reply });
 
-      return reply;
+      // Defensive early-warning: an empty final_reply means ConversationRelay
+      // gets nothing to speak, so the caller sits in silence until they say
+      // something. Almost always a prompt-drift issue (Claude followed a
+      // "don't speak" instruction, or the tools were called without a text
+      // block in the FIRST response). Log loudly so it's grep-able.
+      if (final_reply.trim().length === 0) {
+        sessionLog().warn(
+          {
+            description: 'Claude returned an empty text response after the tool loop — caller will hear silence until they speak',
+            historyLength: history.length,
+          },
+          'CLAUDE_EMPTY_RESPONSE',
+        );
+      }
+
+      return final_reply;
     }
   } catch (err) {
     // Two consecutive Claude failures — fall back to a live-agent handoff so
