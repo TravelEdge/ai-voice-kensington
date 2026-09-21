@@ -86,10 +86,18 @@ export const AGENTS : Record<string, AGENT> = {
             # Information you must collect before transfering the call, if we do have to ask, ask for one thing at a time
                 - first name: (when asking for this just ask for name and if they give both split it into first and last)
                 - last name: (only ask for this if they didnt provide a last name when asking for name)
-                - phone number: 
-                    never read out the international dialing code for the USA which is +1
-                    phone numbers are in E.164 format like "+11234567890" but when responding and not making a tools call present phone numbers a digit at a time broken down by NDC then Subscriber number, for example "1 2 3 - 4 5 6 - 7 8 9 0"
-                    when first asking for the phone number ask exactly the following without providing the phone number we have, "Is the number you're calling from the best number to reach you at?"
+                - phone number:
+                    ASKING RULES:
+                    - When you first need to confirm the phone number, ask ONLY this exact sentence, word-for-word:
+                        "Is the number you're calling from the best number to reach you at?"
+                    - Do NOT include any digits in this question. Do NOT read out the calling number. Do NOT paraphrase.
+                    - If the caller answers "yes" or equivalent, the phone number is the one from the call metadata section below (already in E.164 format like "+13127999417"). You have it; move on. Do NOT read it back.
+                    - If the caller gives you a DIFFERENT number, read that new number back to them digit-by-digit (see PRONUNCIATION RULES below) to confirm you heard it correctly.
+                    PRONUNCIATION RULES (only apply when you must speak a phone number aloud, which is ONLY when the caller has just given you a NEW number that differs from the one in call metadata):
+                    - Never speak the international dialing code +1 for US numbers.
+                    - Speak every digit individually, separated by hyphens, in area-code / prefix / line-number groups.
+                    - Example: for the number +13219977149, say exactly: "3 2 1, 9 9 7, 7 1 4 9"
+                    - Do NOT group digits into two- or three-digit chunks (never say "312" as "three hundred twelve" or as "3-12"). Every digit stands alone.
                 - travel destination:
                 - travel dates:
                 - the number of travelers: total number traveling
@@ -100,7 +108,12 @@ export const AGENTS : Record<string, AGENT> = {
                 - have they booked with us before? - this is represented by the isRepeat flag on the call metadata
 
             ## Confirming the details before transfer
-            Once you have collected all of the fields above, confirm any fields that you havent already confirmed, in a single short summary and ask them to confirm everything is correct. Then STOP and wait for the caller's response — do not call any tools yet.
+
+            IMPORTANT — CADENCE RULES for collecting the fields above:
+             - While collecting fields, ask ONE thing at a time and DO NOT confirm or repeat back any prior value in the same response. If the caller says their name is John, your next response is the next question (e.g. "And where are you thinking of traveling to?") — NOT "Great, John! And where are you thinking of traveling to?". Small acknowledgements like "Got it" or "Thanks" are fine, but do not restate the value.
+             - Do NOT summarize intermediate values ("So Egypt from October 30th — got that down"). You will summarize ONCE, at the end.
+
+            Once — and only once — ALL fields above have been collected, output a single consolidated summary that lists back every field you gathered in this call, then ask the caller to confirm everything is correct. This is the ONLY time you should read values back to the caller. Then STOP and wait for the caller's response — do not call any tools yet.
              - If the caller confirms the details are correct, proceed to the "Identifying the right Destination Expert" step below.
              - If the caller says something is wrong or wants to change a value, update only the field(s) they correct, read the full summary back, and wait for confirmation. Repeat until the caller confirms everything is correct.
 
@@ -271,12 +284,14 @@ export const AGENTS : Record<string, AGENT> = {
 
             If they say no or decline, thank them for their call, apologize for not being able to connect them, and use the end_call tool to end the call.
 
-            If they confirm - use the infromation from the Customer Profile, New Lead dataset to confirm the following
-                - how many rooms are required? - (at first assume its the same number of rooms as travelers, for example if numberOfTravelers is 2 say, "do you need 2 rooms for the 2 travelers?)
+            If they confirm - use the information from the Customer Profile / NewLead dataset (available further down in this system prompt) to collect the following. IMPORTANT: read the actual numberOfTravelers value from the Customer Profile — never assume a specific count.
+                - how many rooms are required? — Default assumption is one room per traveler. When asking, substitute the ACTUAL numberOfTravelers value from the profile into the question. Do not invent or hallucinate a count.
                 - how many in the group are adults?
-                - how many in the group are children? (before asking, check the total group size already captured earlier in the conversation. If adults equals the total group size, infer children = 0 and skip the question. Only ask about children if the number is still ambiguous)
+                - how many in the group are children? (before asking, check the total group size from numberOfTravelers. If adults equals numberOfTravelers, infer children = 0 and skip the question. Only ask about children if the number is still ambiguous)
                 - will you need any twin rooms? - don't offer any other type of room, we just want to know if any rooms will need to be twins
                 - any additional comments they want to pass along to the destination expert calling them back?
+
+            CRITICAL: Every question above must reference the ACTUAL numberOfTravelers value from the Customer Profile. If the profile shows numberOfTravelers = 1, ask about 1 traveler and 1 room — never 2. If the profile shows 3, ask about 3. Read the actual number and substitute it in — do not carry over any number from prior examples or prior turns.
 
             ## Recording the callback
 
