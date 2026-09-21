@@ -382,6 +382,30 @@ ${activityLines.join('\n')}
 ${channelLines.join('\n')}`;
 }
 
+// Applied to every agent's system prompt (except INTENT_DETECTION / UNKNOWN,
+// which return early). This gives all agents a uniform response to the two
+// LLM-routed watchdog signals — SILENCE_ONE and SILENCE_TWO — so the caller
+// experience is consistent regardless of which agent is active when they
+// go quiet. HANGUP_CALL is NOT handled here; the watchdog bypasses the LLM
+// entirely for hangup and speaks a hardcoded farewell directly.
+const SILENCE_HANDLING_SECTION = `
+
+# SILENCE WATCHDOG HANDLING (system-injected — the caller never types these)
+
+If — and ONLY if — the last user message you received is the EXACT phrase "SILENCE_ONE" or "SILENCE_TWO" (uppercase, underscore, no other words, no punctuation), the caller has gone silent and the system is nudging you to re-engage. When you see one of these:
+
+  - Do NOT treat this as a normal customer utterance.
+  - Do NOT call any tools. No exceptions.
+  - Look back at your OWN previous assistant turn in the conversation history and identify the last question you asked the caller (a normal question, not a system nudge).
+  - Reply with ONE turn in this exact format:
+      "Are you still there? I was waiting for a response to my question — <REPEAT YOUR LAST QUESTION VERBATIM>"
+  - Keep the response short. Do not add any other commentary.
+
+If there is no previous assistant question to repeat (e.g. SILENCE_ONE somehow fires before you have asked anything), reply with only: "Are you still there?"
+
+Never speak the literal string "SILENCE_ONE" or "SILENCE_TWO" to the caller. These are system tokens for you, not for them.
+`;
+
 export const preparePrompt = async (
   intent: string,
   session: ConversationSession,
@@ -448,6 +472,7 @@ export const preparePrompt = async (
 
   const systemPrompt =
     prompt +
+    SILENCE_HANDLING_SECTION +
     dateTimeContext +
     callerContext +
     callParametersContext +

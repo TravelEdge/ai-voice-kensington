@@ -35,6 +35,11 @@ import {
   sessionLog,
   isLogEnabled,
 } from './logger.js';
+import {
+  initWatchdog,
+  armSilenceTimer,
+  cancelSilenceTimer,
+} from './watchdog.js';
 
 
 await cacheBackendData();
@@ -78,7 +83,12 @@ const voiceChannel = new VoiceChannel(tac, {
     interruptSensitivity,
     welcomeGreetingInterruptible,
     speechModel,
-    eotThreshold
+    eotThreshold,
+    // Subscribe to CR speaker events (agentSpeaking / clientSpeaking on-off).
+    // Hardcoded rather than env-configurable because the silence watchdog
+    // (see src/watchdog.ts) depends on these events firing — letting an env
+    // var quietly disable them would break the watchdog with no warning.
+    events: 'speaker-events',
   }
 
 });
@@ -150,6 +160,42 @@ voiceChannel.on('interrupt', ({ conversationId, utteranceUntilInterrupt, duratio
       { utterance: spoken || null, durationUntilInterruptMs: durationUntilInterruptMs ?? 0 },
       'INTERRUPT',
     );
+  }
+});
+
+// -----------------------------------------------------------------------------
+// Silence watchdog wiring
+// -----------------------------------------------------------------------------
+// CR emits agentSpeaking on/off around TTS playback and clientSpeaking on/off
+// around STT-detected caller speech. The watchdog uses these two signals to
+// escalate through SILENCE_ONE → SILENCE_TWO → HANGUP_CALL when the caller
+// goes quiet. handleMessage has no bearing on the timers — the timer is
+// driven purely by what the caller experiences on the CR side of the wire.
+initWatchdog(tac, voiceChannel);
+
+voiceChannel.on('agentSpeaking', ({ conversationId, value, session }) => {
+  const convId = String(conversationId);
+  if (isLogEnabled('CR_SPEAK_EVENT')) {
+    sessionLog(convId).info({}, value === 'on' ? 'CR_AGENT_SPEAK_ON' : 'CR_AGENT_SPEAK_OFF');
+  }
+  // Arm the next-stage silence timer the moment the agent stops speaking.
+  // On the very first turn this arms SILENCE_ONE; after a nudge has fired,
+  // fireStage() has already advanced nextStage, so this arms SILENCE_TWO
+  // (and then HANGUP_CALL after that).
+  if (value === 'off') {
+    armSilenceTimer(convId, session);
+  }
+});
+
+voiceChannel.on('clientSpeaking', ({ conversationId, value }) => {
+  const convId = String(conversationId);
+  if (isLogEnabled('CR_SPEAK_EVENT')) {
+    sessionLog(convId).info({}, value === 'on' ? 'CR_CLIENT_SPEAK_ON' : 'CR_CLIENT_SPEAK_OFF');
+  }
+  // Caller is engaged again — cancel the current timer and reset the
+  // escalation to stage 0. Next agentSpeaking:off starts SILENCE_ONE fresh.
+  if (value === 'on') {
+    cancelSilenceTimer(convId);
   }
 });
 

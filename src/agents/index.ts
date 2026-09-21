@@ -30,6 +30,7 @@ import {
   deepAutoParse,
   type ClaudeApiCall,
 } from '../logger.js';
+import { purgeWatchdogState } from '../watchdog.js';
 
 let claude: Anthropic | undefined;
 
@@ -487,4 +488,5 @@ export function clearConversationById(convId: string, from: string | undefined):
 
   purgeConversation(convId, from);
   purgeSessionState(convId);
+  purgeWatchdogState(convId);
 }

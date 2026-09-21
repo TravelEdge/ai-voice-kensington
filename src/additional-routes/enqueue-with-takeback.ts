@@ -274,7 +274,11 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
             interruptSensitivity: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_INTERRUPT_SENSITIVITY,
             welcomeGreetingInterruptible: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_WELCOME_GREETING_INTERRUPTIBLE,
             speechModel: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_SPEECH_MODEL,
-            eotThreshold: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_EOT_THRESHOLD ? +process.env.RETURN_TO_AGENT_TWIML_OPTIONS_EOT_THRESHOLD : undefined
+            eotThreshold: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_EOT_THRESHOLD ? +process.env.RETURN_TO_AGENT_TWIML_OPTIONS_EOT_THRESHOLD : undefined,
+            // Subscribe to CR speaker events (agentSpeaking / clientSpeaking
+            // on-off). Must match the default TwiML options in src/index.ts
+            // so the silence watchdog keeps working through the takeback flow.
+            events: 'speaker-events',
         } as never);
         relay.parameter({ name: 'takeback', value: 'true' });
         if (preloadedTraits) {

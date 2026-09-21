@@ -242,6 +242,14 @@ export function deepAutoParse(value: unknown): unknown {
 //   CONVERSATION_LIFECYCLE  conversation-ended + full-transcript debug dump
 //   HANDOFF_LIFECYCLE   end_call scheduling + handoff-initiated markers
 //   FALLBACK            Claude retry warn + double-failure error + fallback handoff
+//   CR_SPEAK_EVENT      the four ConversationRelay speaker events —
+//                       CR_AGENT_SPEAK_ON/OFF (TTS start/stop) and
+//                       CR_CLIENT_SPEAK_ON/OFF (caller speech start/stop).
+//                       Useful for tracing exactly where silence gaps happen;
+//                       chatty otherwise, safe to suppress in prod.
+//   SILENCE_TIMER       silence-watchdog stage-fire warnings
+//                       (SILENCE_ONE / SILENCE_TWO / HANGUP_CALL). Rare —
+//                       never suppress in prod.
 //
 // Note: error-level logs (auth failures, HTTP 5xx from backends, exceptions)
 // are never gated behind a flag — you always see them.
@@ -265,7 +273,9 @@ export type LogFlag =
   | 'INTENT_CHANGE'
   | 'CONVERSATION_LIFECYCLE'
   | 'HANDOFF_LIFECYCLE'
-  | 'FALLBACK';
+  | 'FALLBACK'
+  | 'CR_SPEAK_EVENT'
+  | 'SILENCE_TIMER';
 
 export function isLogEnabled(flag: LogFlag): boolean {
   return !disabledFlags.has(flag);
