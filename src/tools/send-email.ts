@@ -31,6 +31,14 @@ const DEFAULT_SUBJECT = 'New Lead Summary';
 const SENDGRID_API_URL = 'https://api.sendgrid.com/v3/mail/send';
 const TWILIO_EMAILS_API_URL = 'https://comms.twilio.com/v1/Emails';
 
+// Every send_lead_email invocation returns this exact string to the LLM,
+// regardless of whether the underlying HTTP send succeeded, failed with a 4xx,
+// or blew up on missing config. Success and failure are BOTH observable to
+// operators via the EMAIL_SENT / EMAIL_FAILURE pino logs — but the LLM must
+// never see a failure-shaped string, because that derails the caller-facing
+// flow ("Failed to send..." reads to the model as "surface this to the user").
+const LEAD_EMAIL_TOOL_RESULT = 'lead_email_processed';
+
 type EmailProvider = 'sendgrid' | 'twilio';
 
 function resolveProvider(): EmailProvider {
@@ -72,7 +80,7 @@ type LeadFieldKey = (typeof LEAD_FIELDS)[number]['key'];
 export const SEND_LEAD_EMAIL: Anthropic.Tool = {
   name: 'send_lead_email',
   description:
-    'Send a "New Lead Summary" email with the details captured during a NEW_LEAD call. The recipient and sender addresses are configured server-side; the underlying email provider (SendGrid or Twilio) is also selected server-side. The tool formats every populated lead field as a two-column table in the email body — pass only the fields you actually captured.',
+    'Internal audit-log side-effect. Fires off a "New Lead Summary" email to the ops team containing the lead details captured on the call. This is fire-and-forget: its return value is always "lead_email_processed" and is for logging purposes only. It MUST NOT influence what you say to the caller, whether or when you end the call, or your decision to advance in the current flow. Recipient, sender, and email provider (SendGrid or Twilio) are configured server-side. Pass only fields the caller actually provided — omit unknowns.',
   input_schema: {
     type: 'object',
     properties: {
@@ -218,17 +226,31 @@ function renderEmail(toolInput: Record<string, unknown>): RenderedEmail {
   };
 }
 
+// Every return path returns the same neutral `lead_email_processed` string.
+// Failures are surfaced ONLY via the pino error log (EMAIL_FAILURE) — the LLM
+// never sees a failure-shaped string, so its next spoken response cannot be
+// derailed by an ops-team audit action that shouldn't affect the caller.
 async function sendViaSendGrid(email: RenderedEmail): Promise<string> {
   const apiKey = process.env.SENDGRID_API_KEY;
   const fromEmail = process.env.SENDGRID_FROM_EMAIL;
   const fromName = process.env.SENDGRID_FROM_NAME;
   const toEmail = process.env.SENDGRID_TO_EMAIL;
 
-  if (!apiKey) return 'Error: SENDGRID_API_KEY is not configured.';
-  if (!fromEmail) {
-    return 'Error: SENDGRID_FROM_EMAIL is not configured (SendGrid requires a verified sender identity).';
+  if (!apiKey || !fromEmail || !toEmail) {
+    contextLog().error(
+      {
+        backend: 'sendgrid',
+        missing: [
+          !apiKey && 'SENDGRID_API_KEY',
+          !fromEmail && 'SENDGRID_FROM_EMAIL',
+          !toEmail && 'SENDGRID_TO_EMAIL',
+        ].filter(Boolean),
+        description: 'SendGrid config missing — cannot send lead email',
+      },
+      'EMAIL_FAILURE',
+    );
+    return LEAD_EMAIL_TOOL_RESULT;
   }
-  if (!toEmail) return 'Error: SENDGRID_TO_EMAIL is not configured.';
 
   const payload = {
     personalizations: [{ to: [{ email: toEmail }] }],
@@ -255,12 +277,7 @@ async function sendViaSendGrid(email: RenderedEmail): Promise<string> {
         { backend: 'sendgrid', to: toEmail, subject: email.subject, fieldCount: email.fieldCount },
         'EMAIL_SENT',
       );
-      return `lead_email_sent: ${JSON.stringify({
-        provider: 'sendgrid',
-        to: toEmail,
-        subject: email.subject,
-        fieldCount: email.fieldCount,
-      })}`;
+      return LEAD_EMAIL_TOOL_RESULT;
     }
 
     const errorBody = await response.text();
@@ -275,7 +292,7 @@ async function sendViaSendGrid(email: RenderedEmail): Promise<string> {
       },
       'EMAIL_FAILURE',
     );
-    return `Failed to send lead email: ${response.status} ${response.statusText}`;
+    return LEAD_EMAIL_TOOL_RESULT;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     contextLog().error(
@@ -286,7 +303,7 @@ async function sendViaSendGrid(email: RenderedEmail): Promise<string> {
       },
       'EMAIL_FAILURE',
     );
-    return `Failed to send lead email: ${message}`;
+    return LEAD_EMAIL_TOOL_RESULT;
   }
 }
 
@@ -297,10 +314,22 @@ async function sendViaTwilio(email: RenderedEmail): Promise<string> {
   const fromName = process.env.TWILIO_EMAIL_FROM_NAME;
   const toAddress = process.env.TWILIO_EMAIL_TO_ADDRESS;
 
-  if (!accountSid) return 'Error: TWILIO_ACCOUNT_SID is not configured.';
-  if (!authToken) return 'Error: TWILIO_AUTH_TOKEN is not configured.';
-  if (!fromAddress) return 'Error: TWILIO_EMAIL_FROM_ADDRESS is not configured.';
-  if (!toAddress) return 'Error: TWILIO_EMAIL_TO_ADDRESS is not configured.';
+  if (!accountSid || !authToken || !fromAddress || !toAddress) {
+    contextLog().error(
+      {
+        backend: 'twilio-email',
+        missing: [
+          !accountSid && 'TWILIO_ACCOUNT_SID',
+          !authToken && 'TWILIO_AUTH_TOKEN',
+          !fromAddress && 'TWILIO_EMAIL_FROM_ADDRESS',
+          !toAddress && 'TWILIO_EMAIL_TO_ADDRESS',
+        ].filter(Boolean),
+        description: 'Twilio Emails config missing — cannot send lead email',
+      },
+      'EMAIL_FAILURE',
+    );
+    return LEAD_EMAIL_TOOL_RESULT;
+  }
 
   const payload = {
     from: fromName
@@ -330,12 +359,7 @@ async function sendViaTwilio(email: RenderedEmail): Promise<string> {
         { backend: 'twilio-email', to: toAddress, subject: email.subject, fieldCount: email.fieldCount },
         'EMAIL_SENT',
       );
-      return `lead_email_sent: ${JSON.stringify({
-        provider: 'twilio',
-        to: toAddress,
-        subject: email.subject,
-        fieldCount: email.fieldCount,
-      })}`;
+      return LEAD_EMAIL_TOOL_RESULT;
     }
 
     const errorBody = await response.text();
@@ -350,7 +374,7 @@ async function sendViaTwilio(email: RenderedEmail): Promise<string> {
       },
       'EMAIL_FAILURE',
     );
-    return `Failed to send lead email: ${response.status} ${response.statusText}`;
+    return LEAD_EMAIL_TOOL_RESULT;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     contextLog().error(
@@ -361,7 +385,7 @@ async function sendViaTwilio(email: RenderedEmail): Promise<string> {
       },
       'EMAIL_FAILURE',
     );
-    return `Failed to send lead email: ${message}`;
+    return LEAD_EMAIL_TOOL_RESULT;
   }
 }
 
