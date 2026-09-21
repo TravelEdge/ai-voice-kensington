@@ -63,6 +63,9 @@ const interruptSensitivity = process.env.DEFAULT_TWIML_OPTIONS_INTERRUPT_SENSITI
   | 'high' | 'medium' | 'low' | undefined;
 const welcomeGreetingInterruptible = process.env.DEFAULT_TWIML_OPTIONS_WELCOME_GREETING_INTERRUPTIBLE as
   | 'any' | 'speech' | 'none' | undefined;
+const speechModel = process.env.DEFAULT_TWIML_OPTIONS_SPEECH_MODEL as 
+  | 'flux' | 'nova-3-general' | 'nova-3-medical' | 'nova-2-general' | undefined;
+const eotThreshold = process.env.DEFAULT_TWIML_OPTIONS_EOT_THRESHOLD  as number | undefined;
 
 // Register channels
 const voiceChannel = new VoiceChannel(tac, {
@@ -75,6 +78,8 @@ const voiceChannel = new VoiceChannel(tac, {
     interruptible,
     interruptSensitivity,
     welcomeGreetingInterruptible,
+    speechModel,
+    eotThreshold
   }
 
 });

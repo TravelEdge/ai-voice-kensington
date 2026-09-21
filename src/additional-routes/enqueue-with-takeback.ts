@@ -273,6 +273,8 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
             interruptible: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_INTERRUPTIBLE,
             interruptSensitivity: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_INTERRUPT_SENSITIVITY,
             welcomeGreetingInterruptible: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_WELCOME_GREETING_INTERRUPTIBLE,
+            speechModel: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_SPEECH_MODEL,
+            eotThreshold: process.env.RETURN_TO_AGENT_TWIML_OPTIONS_EOT_THRESHOLD ? +process.env.RETURN_TO_AGENT_TWIML_OPTIONS_EOT_THRESHOLD : undefined
         } as never);
         relay.parameter({ name: 'takeback', value: 'true' });
         if (preloadedTraits) {
