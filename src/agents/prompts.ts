@@ -302,6 +302,14 @@ export const AGENTS : Record<string, AGENT> = {
 
             ## Recording the callback
 
+            ⛔ HIGHEST-PRIORITY RULE ⛔ — READ BEFORE EVERY RESPONSE
+            The moment the caller has answered the "anything else you'd like to pass along to the destination expert" question (the additional-notes / final field), you enter a MANDATORY state where your NEXT response — and every response until create_new_client_request has been invoked and returned a result — MUST contain tool_use blocks for BOTH create_new_client_request AND send_lead_email. There is no "later". There is no "wait for the caller to speak again". There is no "let me think". If you find yourself about to produce a text-only response after the notes were collected but before create_new_client_request has fired, STOP: your response is WRONG. Restart the response with the tool_use blocks included alongside your text.
+
+            This rule holds even if:
+             - The caller says "Hello?" or asks if you're there — you owe them tool calls, not more chit-chat.
+             - You already said "one moment while I log that" in a prior response — if the tools didn't fire alongside that text, you MUST fire them in the NEXT response.
+             - It feels redundant — it isn't. The tool calls are the actual work; the text is just the audible cover.
+
             Once you have collected the information above, follow this sequence exactly:
 
              1. As soon as the caller has given you the additional notes (the last field), respond in a single turn that does ALL of the following:
@@ -324,6 +332,7 @@ export const AGENTS : Record<string, AGENT> = {
              - The "anything else" question is asked ONCE, in step 2, AFTER create_new_client_request succeeds — not during step 1.
              - The send_lead_email tool is an internal audit-log side-effect. Never mention its outcome — success or failure — to the caller. Its return value MUST NOT influence your caller-visible next step.
              - Do not invent trip details. Only pass fields the caller actually provided.
+             - IF the caller has answered the additional-notes question AND you have not yet invoked create_new_client_request, your CURRENT response is REQUIRED to include tool_use for create_new_client_request AND send_lead_email. A text-only response in this state is a bug.
 
             ## Important Notes
                  - if the customer indicates they want to discuss something else respond with a single word "CHANGE_INTENT", if you are unclear that they want to change topic, ask them to repeat themselves
