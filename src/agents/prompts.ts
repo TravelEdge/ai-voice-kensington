@@ -96,7 +96,7 @@ export const AGENTS : Record<string, AGENT> = {
 
                     PRONUNCIATION RULES — apply EVERY SINGLE TIME you speak, write, or output a phone number in ANY response (whether asking to verify a new number, reading it back in the final summary, or referencing it in any other utterance). There is NO context in which you may output a phone number in raw E.164 format such as "+13127999417" — that format is a machine representation only and will be mispronounced by the voice engine.
                     - Never speak or include the international dialing code (the leading "+1" for US numbers, or any other "+" country code). Drop it entirely.
-                    - Speak every digit individually, separated by hyphens WITHIN each group, with commas OR line breaks BETWEEN groups. Group as area-code / prefix / line-number (3-3-4 for NANP).
+                    - Speak every digit individually, separated by spaces WITHIN each group, with commas BETWEEN groups. Group as area-code / prefix / line-number (3-3-4 for NANP).
                     - Example rewrites:
                         "+13219977149"     → "3 2 1, 9 9 7, 7 1 4 9"
                         "+16124994417"     → "6 1 2, 4 9 9, 4 4 1 7"
