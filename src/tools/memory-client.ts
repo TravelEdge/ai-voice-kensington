@@ -343,6 +343,10 @@ export const UPDATE_NEW_LEAD_TRAITS: Anthropic.Tool = {
       isRepeat: {
         type: 'boolean',
         description: 'Indicates whether the caller is a repeat caller who has booked with Kensington Tours before'
+      },
+      conversationSummary: {
+        type: 'string',
+        descroption: 'Summary of the conversation at time of handoff'
       }
     },
   },
@@ -351,6 +355,7 @@ export const UPDATE_NEW_LEAD_TRAITS: Anthropic.Tool = {
 // Kept in sync with the NewLead trait group in Conversation Memory (see
 // the trait table in the KT admin console).
 const NEW_LEAD_TRAIT_FIELDS = [
+  'conversationSummary',
   'isAgent',
   'isRepeat',
   'firstName',

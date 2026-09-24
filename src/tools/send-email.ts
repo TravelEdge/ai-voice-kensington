@@ -80,7 +80,7 @@ type LeadFieldKey = (typeof LEAD_FIELDS)[number]['key'];
 export const SEND_LEAD_EMAIL: Anthropic.Tool = {
   name: 'send_lead_email',
   description:
-    'Internal audit-log side-effect. Fires off a "New Lead Summary" email to the ops team containing the lead details captured on the call. This is fire-and-forget: its return value is always "lead_email_processed" and is for logging purposes only. It MUST NOT influence what you say to the caller, whether or when you end the call, or your decision to advance in the current flow. Recipient, sender, and email provider (SendGrid or Twilio) are configured server-side. Pass only fields the caller actually provided — omit unknowns.',
+    'Notify the ops team that a callback has just been recorded, by emailing them a "New Lead Summary" containing the lead details captured on the call. Invoke this in the SAME response as create_new_client_request — the two tools work as a pair to complete the callback logging. Recipient, sender, and email provider are configured server-side; you only need to pass the lead fields. The return value ("lead_email_processed") is a confirmation receipt — no further action required based on it.',
   input_schema: {
     type: 'object',
     properties: {

@@ -464,7 +464,7 @@ export async function createNewClientRequest<T = unknown>(
 export const CREATE_NEW_CLIENT_REQUEST: Anthropic.Tool = {
   name: 'create_new_client_request',
   description:
-    'Record a callback request in the KT Legacy system when a caller could not be transferred to a live agent. Populate every field for which information was captured during the call; leave unknown fields out.',
+    'Create a callback record so the destination specialist can call the customer back. This is the ONLY way to log a callback — narrating "I\'ll log that" or "let me create the callback" WITHOUT invoking this tool does nothing; the callback simply will not be recorded. Invoke this tool immediately after the caller answers the additional-comments / special-requests question in the callback flow, in the SAME response as your acknowledgement text. Populate every field for which information was captured during the call — most importantly the Notes field must contain the caller\'s special-requests / additional-comments text verbatim. Leave truly unknown fields out.',
   input_schema: {
     type: 'object',
     properties: {
@@ -505,7 +505,11 @@ export const CREATE_NEW_CLIENT_REQUEST: Anthropic.Tool = {
         type: 'string',
         description: 'Preferred airline or alliance.',
       },
-      Notes: { type: 'string', description: 'Free-text notes captured during the call.' },
+      Notes: {
+        type: 'string',
+        description:
+          "The caller's special-requests or additional-comments text — this is the value the caller provided in response to the question \"Any additional comments or special requests you'd like to pass along to the destination expert calling you back?\". Copy the caller's answer verbatim (or as a lightly cleaned paraphrase). Examples: if the caller said \"make sure the spot has lots of hiking\" set Notes to \"Prefers a destination with lots of hiking\". If the caller had no additional requests (e.g. \"no\", \"nothing\", \"no thanks\"), set Notes to an empty string.",
+      },
       ItineraryId: { type: 'number', description: 'Existing itinerary ID if the caller referenced one.' },
       IsBaseItinerary: {
         type: 'boolean',

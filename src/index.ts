@@ -200,9 +200,10 @@ voiceChannel.on('clientSpeaking', ({ conversationId, value }) => {
   }
   // Caller is engaged again — cancel the current timer and reset the
   // escalation to stage 0. Next agentSpeaking:off starts SILENCE_ONE fresh.
-  if (value === 'on') {
-    cancelSilenceTimer(convId);
-  }
+  // note sometimes on interrupts, the on event comes after the agent off event
+  // causing a trigger to start early, so we also want to cancel timers if a 
+  // client off event arrives
+  cancelSilenceTimer(convId);
 });
 
 // Single handler for all channels — TAC routes the response back correctly

@@ -438,7 +438,7 @@ async function handleMessageInternal(
       // strip trailing whitespace when a turn was empty; a single space
       // joiner reads naturally when a "one moment" line meets a "here you go"
       // closer.
-      const final_reply = collectedText.join(' ').trim();
+      const final_reply = collectedText.join(' ').trim() === "" ? "Please give me one more moment to log that." : collectedText.join(' ').trim();
 
       history.push({ role: 'assistant', content: final_reply });
 

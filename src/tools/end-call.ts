@@ -15,7 +15,7 @@ import { disableWatchdog } from '../watchdog.js';
 export const END_CALL: Anthropic.Tool = {
   name: 'end_call',
   description:
-    'Signal that the current phone call should end after your final spoken response. Use this only when the conversation is truly finished — e.g., after a callback has been recorded or the caller has confirmed no further help is needed. IMPORTANT: include your farewell in the same response as this tool call — the caller will hear your text before the line disconnects.',
+    'HANG UP the current phone call. Invoke this ONLY when BOTH conditions are true: (1) the conversation is genuinely finished — every requested action is complete, the caller has confirmed they need nothing else, and there is no follow-up work to do; AND (2) you are speaking (or have just spoken in the immediately-preceding text block) a spoken FAREWELL to the caller such as "Thanks for calling Kensington Tours, have a great day!" or similar. Invoking end_call disconnects the line — anything you were going to do afterward CANNOT happen. Never invoke this tool as a substitute for another action (e.g. do NOT invoke it to "log" a callback — that is create_new_client_request\'s job). Never invoke it before a farewell has been spoken — the caller would hear a hard cut with no goodbye. Never invoke it while any other work is pending (e.g. while you still need to fire create_new_client_request or send_lead_email). The tool takes an optional "reason" string used only for server-side logs (never spoken to the caller).',
   input_schema: {
     type: 'object',
     properties: {

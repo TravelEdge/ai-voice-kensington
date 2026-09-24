@@ -43,7 +43,7 @@ interface WatchdogState {
 }
 
 const HANGUP_FAREWELL =
-  "It seems like something has gone wrong at your end, please call us again at your earliest convenience. Thank you for calling Kensington Tours, goodbye!";
+  "Unfortunately, it seems like something has gone wrong, please call us again at your earliest convenience. Thank you for calling Kensington Tours, goodbye!";
 
 const state = new Map<string, WatchdogState>();
 
