@@ -92,11 +92,9 @@ const voiceChannel = new VoiceChannel(tac, {
   }
 
 });
-const smsChannel = new SMSChannel(tac, {memoryMode: "never"});
 
 
 tac.registerChannel(voiceChannel);
-tac.registerChannel(smsChannel);
 
 // Per-call customizer for the inbound /twiml endpoint. Always emits isAgent
 // and isRepeat as ConversationRelay <Parameter> values so they're guaranteed
