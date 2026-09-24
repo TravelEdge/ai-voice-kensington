@@ -354,7 +354,7 @@ async function handleMessageInternal(
         const toolUseBlocks = response.content.filter(
           (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
         );
-
+        
         // Add assistant's response (including tool_use blocks) to history
         history.push({
           role: 'assistant',
@@ -438,7 +438,7 @@ async function handleMessageInternal(
       // strip trailing whitespace when a turn was empty; a single space
       // joiner reads naturally when a "one moment" line meets a "here you go"
       // closer.
-      const final_reply = collectedText.join(' ').trim() === "" ? "Please give me one more moment to log that." : collectedText.join(' ').trim();
+      const final_reply = collectedText.join(' ').trim() === "" ? "Please give me one more moment to process that." : collectedText.join(' ').trim();
 
       history.push({ role: 'assistant', content: final_reply });
 

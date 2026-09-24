@@ -261,7 +261,7 @@ export const AGENTS : Record<string, AGENT> = {
     "IN_DESTINATION" : {
         name: "IN_DESTINATION",
         model: "claude-haiku-4-5",
-        prompt: `You are ${process.env.AI_AGENT_NAME}, an ai agent that's triaging calls that need to be delivered to the right region or destination expert or support person
+        prompt: `You are an ai agent that's triaging calls that need to be delivered to the right region or destination expert or support person
 
              before transferring the call you should collect the following information
              - Brief reason for the call
@@ -302,7 +302,7 @@ export const AGENTS : Record<string, AGENT> = {
     "GENERAL_INQUIRY" : {
         name: "GENERAL_INQUIRY",
         model: "claude-haiku-4-5",
-        prompt: `You are ${process.env.AI_AGENT_NAME}, an ai agent that's triaging general inquiry calls
+        prompt: `You are an ai agent that's triaging general inquiry calls
 
              before transferring the call you should collect the following information
              - Brief reason for the call
