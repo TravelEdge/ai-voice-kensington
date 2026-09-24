@@ -1,0 +1,77 @@
+sequenceDiagram
+    autonumber
+    actor C as Caller
+    participant TW as Twilio Voice
+    participant SF as Studio Flow
+    participant TB as TwiML Bin
+    participant TAC as TAC /twiml
+    participant CR as ConversationRelay
+    participant WS as TAC WebSocket
+    participant HM as handleMessage
+    participant LLM as Claude Haiku
+    participant T as Tools
+
+    Note over C,SF: Caller dials the Twilio number
+    C->>TW: Inbound PSTN call
+    TW->>SF: Voice webhook
+    Note over SF: Routes by DNIS,<br/>selects version,<br/>picks TwiML Bin
+    SF->>TB: <Redirect> to TwiML Bin
+    TB-->>SF: Liquid-substituted TwiML with<br/>?aiAgentDomain=...&isAgent=true&isRepeat=true
+    SF->>TAC: POST /twiml?isAgent=X&isRepeat=Y
+
+    Note over TAC: twiml-query-carrier preHandler<br/>stashes query params (side-map),<br/>keeps body signature valid
+    Note over TAC: voiceChannel.onInboundCallTwiml<br/>reads side-map, emits<br/><Parameter> tags for<br/>isAgent, isRepeat, welcomeGreeting
+
+    TAC-->>TW: <Connect><ConversationRelay/> TwiML
+    TW->>CR: Establishes WebSocket
+    CR->>WS: setup event with customParameters
+    Note over WS: voiceChannel.on('setup')<br/>caches CallSid, customParams,<br/>preloaded traits
+    CR-->>C: Plays welcomeGreeting via TTS
+
+    C->>CR: Speaks "I want to plan a trip to Poland"
+    CR->>WS: prompt event
+    WS->>HM: onMessageReady(convId, msg, session)
+
+    Note over HM: First turn → INTENT_DETECTION
+    HM->>LLM: system=classifier prompt<br/>tools=none
+    LLM-->>HM: "NEW_LEAD"
+    Note over HM: reply matches AGENT_NAMES,<br/>recurse with new intent
+
+    HM->>LLM: system=NEW_LEAD prompt<br/>tools=[handoff, get_lead_assignment_queue,<br/>update_new_lead_traits]
+    LLM-->>HM: text: "Great, what's your name..."
+    HM-->>CR: sendResponse(text)
+    CR-->>C: TTS plays
+
+    loop STEP 2 — collect fields one at a time
+        C->>CR: Speaks answer
+        CR->>WS: prompt event
+        WS->>HM: onMessageReady
+        HM->>LLM: full history + system prompt
+        LLM-->>HM: next question text
+        HM-->>CR: sendResponse
+        CR-->>C: TTS plays
+    end
+
+    Note over C,LLM: Final summary + caller confirms details
+
+    C->>CR: "yes, that's right"
+    CR->>WS: prompt event
+    WS->>HM: onMessageReady
+    HM->>LLM: with tool_results context
+    Note over LLM: Fires TWO tools in parallel:
+    LLM-->>HM: text + tool_use(get_lead_assignment_queue)<br/>+ tool_use(update_new_lead_traits)
+    HM->>T: executeTool(get_lead_assignment_queue)
+    T-->>HM: [{ selectedAdvisor: {...}, priorityQueueAdvisors: [...] }]
+    HM->>T: executeTool(update_new_lead_traits)
+    T-->>HM: memory PATCH accepted (202)
+    HM->>LLM: continue with tool_results
+    LLM-->>HM: text + tool_use(handoff)
+    Note over HM,T: handoff tool sets<br/>session.pendingHandoffData<br/>and disables watchdog
+    HM->>T: executeTool(handoff)
+    T-->>HM: "handoff_initiated"
+
+    HM-->>CR: sendResponse(farewell text)
+    Note over CR: TAC sees pendingHandoffData,<br/>emits WebSocket "end" frame<br/>after TTS finishes
+    CR-->>C: Plays "connecting you now..."
+    CR->>TAC: POST /enqueue-or-end-call with HandoffData
+    Note over TAC: HandoffData has workflow_sid,<br/>triage_target — emit <Enqueue> TwiML<br/>with waitUrl + action=/enqueue-completed

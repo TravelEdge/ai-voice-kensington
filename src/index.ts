@@ -10,7 +10,6 @@ import {
   TAC,
   TACConfig,
   VoiceChannel,
-  SMSChannel,
   TACServer,
 } from 'twilio-agent-connect';
 import {

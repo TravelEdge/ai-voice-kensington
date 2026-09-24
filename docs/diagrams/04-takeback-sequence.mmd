@@ -1,0 +1,94 @@
+sequenceDiagram
+    autonumber
+    actor C as Caller
+    participant TW as Twilio Voice
+    participant TAC as TAC Routes
+    participant TR as Flex TaskRouter
+    participant COClient as CO REST API
+    participant CR as ConversationRelay
+    participant WS as TAC WebSocket
+    participant HM as handleMessage
+    participant LLM as Claude
+    participant T as Tools (create_new_client_request,<br/>send_lead_email, end_call)
+
+    Note over C,TR: Continued from NEW_LEAD handoff — <Enqueue> is playing to caller
+
+    TW->>TAC: POST /waitUrl<br/>(profileId in query)
+    TAC-->>TW: <Play>hold music</Play>+<Redirect>/redirect-back-to-agent
+    Note over TR: TaskRouter attempts reservation.<br/>If no agent picks up in configured window,<br/>waitUrl loops or expires.
+    TW-->>C: Hold music plays
+
+    Note over TW,TAC: TaskRouter times out (no reservation).<br/>Wait URL redirects.
+    TW->>TAC: POST /redirect-back-to-agent<br/>(profileId in query)
+    Note over TAC: Prefetch caller traits from Memory<br/>(bypasses inflight-ingestion lag)
+
+    Note over TAC,COClient: Delete stale CO conversation.<br/>Orchestrator sees exactly-1 rule.
+    TAC->>COClient: listConversations(channelId=CallSid)
+    COClient-->>TAC: [{ id: convOld }]
+    TAC->>COClient: DELETE /v2/Conversations/convOld
+    COClient-->>TAC: 204 No Content
+
+    Note over TAC: Build new ConversationRelay TwiML<br/>with <Parameter takeback=true>,<br/>traits, welcomeGreeting (takeback text)
+    TAC->>TW: PUT /Calls/{CallSid} { twiml: <Connect><ConversationRelay/> }
+    TW->>CR: Old CR session ends, new one starts
+    CR->>WS: setup event<br/>customParameters={takeback:'true', traits:..., welcomeGreeting:...}
+    Note over WS: New conversationId, fresh session.<br/>onSetup caches CallSid, params, preloaded traits.
+    CR-->>C: Plays takeback greeting ("agent unavailable, ask a few more...")
+
+    C->>CR: "Yeah, sure"
+    CR->>WS: prompt event
+    WS->>HM: onMessageReady
+
+    Note over HM: takeback=='true' branch:<br/>skip INTENT_DETECTION,<br/>set intent=STACK_CALL directly.<br/>Load memory + promote preloaded traits.
+
+    HM->>LLM: STACK_CALL prompt<br/>tools=[create_new_client_request,<br/>end_call, send_lead_email]
+
+    loop STEP 2 (2a-2f) — collect callback fields
+        Note over C,LLM: rooms → adults → children → twin rooms → email → notes
+        C->>CR: Answers
+        CR->>WS: prompt event
+        WS->>HM: onMessageReady
+        HM->>LLM: full history
+        LLM-->>HM: next question text
+        HM-->>CR: sendResponse
+    end
+
+    Note over C,T: Caller answers final "additional notes" question
+
+    C->>CR: "make sure we have a spot with lots of hiking"
+    CR->>WS: prompt event
+    WS->>HM: onMessageReady
+    HM->>LLM: history now includes notes answer
+    Note over LLM: STEP 3 — fire create_new_client_request<br/>alongside text acknowledgement
+    LLM-->>HM: text "Okay, one moment while I log that."<br/>+ tool_use(create_new_client_request, {Notes: "hiking..."})
+    HM->>T: executeTool(create_new_client_request)
+    T-->>HM: "client_request_created"
+
+    HM->>LLM: continue with tool_result
+    Note over LLM: STEP 4 — fire send_lead_email (silent turn)
+    LLM-->>HM: tool_use(send_lead_email, {...})
+    HM->>T: executeTool(send_lead_email)
+    T-->>HM: "lead_email_processed"
+
+    HM->>LLM: continue with tool_result
+    Note over LLM: STEP 5 — speak the confirmation
+    LLM-->>HM: text "Great, I've created the callback<br/>and captured the note about hiking.<br/>Anything else?"
+    HM-->>CR: sendResponse
+    CR-->>C: TTS plays
+
+    C->>CR: "no thanks"
+    CR->>WS: prompt event
+    WS->>HM: onMessageReady
+    HM->>LLM: with "no" answer
+    Note over LLM: STEP 6 — farewell + end_call
+    LLM-->>HM: text farewell + tool_use(end_call)
+    HM->>T: executeTool(end_call)
+    Note over T: Sets session.pendingHandoffData,<br/>disables watchdog
+    T-->>HM: "end_call_initiated"
+
+    HM-->>CR: sendResponse(farewell)
+    Note over CR: TAC sends WebSocket "end" frame<br/>after TTS finishes
+    CR-->>C: Plays farewell TTS
+    CR->>TAC: POST /enqueue-or-end-call with HandoffData(endCall:true)
+    TAC-->>TW: empty TwiML → call hangs up
+    TAC->>TAC: finalizeConversation<br/>(CO CLOSE + clearConversationById)
