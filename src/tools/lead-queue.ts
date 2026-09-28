@@ -241,10 +241,9 @@ async function unwrap<T>(response: Response, path: string): Promise<T> {
     throw new Error(`LeadDepo ${path} failed (${response.status}): ${body}`);
   }
   const envelope = (await response.json()) as ApiEnvelope<T>;
-  //console.log("ENVELOPE" + JSON.stringify(envelope, null, 4));
-  if (!envelope.result) {
+  if (!envelope.isSuccess || envelope.result == null) {
     const errs = envelope.errors?.map(e => `${e.code}: ${e.message}`).join('; ');
-    throw new Error(`LeadDepo ${path} returned errors: ${errs}`);
+    throw new Error(`LeadDepo ${path} returned errors: ${errs || 'unknown error'}`);
   }
   return envelope.result;
 }
