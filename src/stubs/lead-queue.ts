@@ -3575,9 +3575,9 @@ export const LEAD_ASSIGNMENT_QUEUE_STUB: LeadAssignmentQueueResult[] = [
     "distributionName": "DUMMY",
     "priorityQueueAdvisors": [{
       "id": 29,
-      "firstName": "Maria",
-      "lastName": "Herman",
-      "email": "maria.herman@kensingtontours.com",
+      "firstName": "Dummy",
+      "lastName": "User",
+      "email": "dummyemail@kensingtontours.com",
       "externalId": "82D57881-6D25-49E6-8F1F-570DADFF032F",
       "originId": 1,
       "timeZoneId": 18,
@@ -3592,9 +3592,9 @@ export const LEAD_ASSIGNMENT_QUEUE_STUB: LeadAssignmentQueueResult[] = [
       "dateModified": "2026-07-18T01:00:27.6297881+00:00"
     },{
       "id": 29,
-      "firstName": "Johnny",
-      "lastName": "Five",
-      "email": "johnny.five@kensingtontours.com",
+      "firstName": "Dummy",
+      "lastName": "Two",
+      "email": "dummytwo@kensingtontours.com",
       "externalId": "82D57881-6D25-49E6-8F1F-570DADFF032B",
       "originId": 1,
       "timeZoneId": 18,
@@ -3611,9 +3611,9 @@ export const LEAD_ASSIGNMENT_QUEUE_STUB: LeadAssignmentQueueResult[] = [
     "roundRobinAdvisors": [],
     "selectedAdvisor": {
       "id": 29,
-      "firstName": "Maria",
-      "lastName": "Herman",
-      "email": "maria.herman@kensingtontours.com",
+      "firstName": "Dummy",
+      "lastName": "User",
+      "email": "dummyemail@kensingtontours.com",
       "externalId": "82D57881-6D25-49E6-8F1F-570DADFF032F",
       "originId": 1,
       "timeZoneId": 18,
