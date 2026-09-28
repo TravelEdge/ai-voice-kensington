@@ -122,7 +122,7 @@ export interface LeadAssignmentQueueResult {
   distributionId: number;
   distributionName: string;
   priorityQueueAdvisors: LeadAssignmentAdvisor[];
-  roundRobinAdvisors: LeadAssignmentAdvisor[];
+  advisors: LeadAssignmentAdvisor[];
   selectedAdvisor: LeadAssignmentAdvisor | null;
   decisionLog: unknown | null;
 }

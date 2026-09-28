@@ -3608,7 +3608,7 @@ export const LEAD_ASSIGNMENT_QUEUE_STUB: LeadAssignmentQueueResult[] = [
       "dateCreated": "2024-12-10T11:13:00+00:00",
       "dateModified": "2026-07-18T01:00:27.6297881+00:00"
     }],
-    "roundRobinAdvisors": [],
+    "advisors": [],
     "selectedAdvisor": {
       "id": 29,
       "firstName": "Dummy",
