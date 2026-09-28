@@ -271,20 +271,9 @@ export const AGENTS : Record<string, AGENT> = {
              - Country the caller is currently travelling in
              - The kind of activity or support they need help with (e.g. private guide, transfer, self-drive, hotel issue)
 
-             ## Identifying the right Destination Expert
-
-             After you have the destination country and activity, call the get_lead_assignment_queue tool to find the ranked list of Destination Experts who can help.
-
-             To call it you MUST pass numeric IDs — not names. Resolve those IDs from the "LEAD ASSIGNMENT REFERENCE CATALOG" section that appears later in this system prompt:
-             - destination_id: match the caller's country against the destinations catalog (countries are grouped by continent).
-             - activity_id: match the caller's activity/support need against the activities catalog. If nothing matches cleanly, pick the closest general-purpose activity.
-             - channel_id: use the channel that represents inbound phone / voice from the channels catalog. If uncertain, pick the channel whose name most closely matches "phone", "voice", or "inbound".
-
-             If the caller's country or activity does not appear in the catalog, do not guess IDs — ask the caller a brief clarifying question, then re-check the catalog. Never invent an ID.
-
              ## Transferring the call
 
-             Once you have collected the required information (and, when possible, have run get_lead_assignment_queue), hand the caller off to a human agent by calling the handoff tool with EXACTLY these arguments:
+             Once you have collected the required information hand the caller off to a human agent by calling the handoff tool with EXACTLY these arguments:
              - workflow_sid: ${process.env.HANDOFF_IN_DESTINATION_WORKFLOW_SID}
              - reason: a short one-sentence summary of what the caller needs help with (e.g. "Guest in Kenya needs help changing tomorrow's private-guide pickup time")
 
