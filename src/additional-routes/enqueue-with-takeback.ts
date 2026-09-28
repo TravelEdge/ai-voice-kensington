@@ -375,10 +375,6 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
             ...restAttributes,
         }
 
-        //TODO REMOVE HARDCODED TARGET
-        taskAttributes.triage_target_friendly_name = 'jhunter@twilio.com'
-        taskAttributes.triage_target_friendly_name_secondary = 'jhunter'
-
         if (CallStatus !== 'in-progress') {
             log.warn(
                 {
