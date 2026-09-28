@@ -154,7 +154,9 @@ function collectLeadRows(
   const rows: Array<{ label: string; value: string }> = [];
   for (const { key, label } of LEAD_FIELDS) {
     const raw = toolInput[key as LeadFieldKey];
-    if (typeof raw === 'string' && raw.trim().length > 0) {
+    if (typeof raw === 'boolean') {
+      rows.push({ label, value: raw ? 'Yes' : 'No' });
+    } else if (typeof raw === 'string' && raw.trim().length > 0) {
       rows.push({ label, value: raw.trim() });
     }
   }
