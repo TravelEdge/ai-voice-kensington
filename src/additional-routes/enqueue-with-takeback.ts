@@ -130,12 +130,6 @@ interface EndCallData {
 
 
 const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
-    // Layer the custom routes onto the same Fastify instance TAC provides.
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    await server.fastify.register(fastifyStatic, {
-        root: path.join(__dirname, '..', 'public'),
-        prefix: '/',
-    });
 
     server.fastify.post('/waitUrl', async (request: FastifyRequest, reply: FastifyReply) => {
         const log = request.log.child({ type: 'session' });
