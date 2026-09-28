@@ -232,6 +232,13 @@ async function handleMessageInternal(
     message: string;
     session: ConversationSession;
   },
+  // When handleMessageInternal recurses (INTENT_DETECTION classifier resolved
+  // to a real intent, or CHANGE_INTENT triggered a reset), the customer's
+  // message has already been appended to history by the outer invocation.
+  // The recursive call passes `messageAlreadyInHistory = true` to prevent
+  // duplicating the user turn. External callers (handleMessage) leave the
+  // default `false` so the first invocation performs the push.
+  messageAlreadyInHistory: boolean = false,
 ): Promise<string> {
   const { conversationId, message, session } = params;
   const convId = String(conversationId);
@@ -280,8 +287,13 @@ async function handleMessageInternal(
   const memory = memoryCache.get(convId) as TACMemoryResponse | undefined;
   const profileId = memory ? extractCustomerProfileId(memory) : "";
 
-  // store customers message
-  history.push({ role: 'user', content: message });
+  // Store the customer's message — but only on the first invocation for this
+  // turn. Recursive calls (intent-detection resolve, CHANGE_INTENT reset)
+  // pass messageAlreadyInHistory=true so we don't append the same user turn
+  // multiple times.
+  if (!messageAlreadyInHistory) {
+    history.push({ role: 'user', content: message });
+  }
 
   // Extract customer profile ID from TAC memory response
   const memorySid = process.env.TWILIO_MEMORY_STORE_ID;
@@ -325,7 +337,9 @@ async function handleMessageInternal(
 
       if (Object.values(AGENT_NAMES).includes(reply as AGENT_NAMES)) {
         intents.setAndLog(convId, reply);
-        return handleMessageInternal(tac, { conversationId, message, session });
+        // User message is already in history from this call — don't re-push
+        // it in the recursion.
+        return handleMessageInternal(tac, { conversationId, message, session }, true);
       } else {
         history.push({ role: 'assistant', content: reply });
         return reply;
@@ -334,7 +348,8 @@ async function handleMessageInternal(
 
     } else if (reply === "CHANGE_INTENT") {
       intents.setAndLog(convId, "INTENT_DETECTION");
-      return handleMessageInternal(tac, { conversationId, message, session });
+      // Same — recurse without duplicating the user turn.
+      return handleMessageInternal(tac, { conversationId, message, session }, true);
     } else {
 
       // ConversationRelay is non-streaming from our side — the caller only
