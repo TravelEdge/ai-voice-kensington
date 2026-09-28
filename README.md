@@ -195,7 +195,7 @@ Each tool is an Anthropic `Tool` definition plus an executor function. All tools
 
 Canned responses for offline dev. Enabled via `USE_API_STUBS=true`. Each backend module (`lead-queue`, `tmt-legacy`, `tmt-profile`) checks `isStubMode()` and returns the corresponding stub data instead of hitting the real API. Useful when the KT backends aren't reachable from your dev environment.
 
-`LOG_API_RESPONSES=true` (combined with `USE_API_STUBS=false`) writes each real API response to a timestamped file under `src/stubs/<api>_log/` for later inspection.
+`LOG_API_RESPONSES=true` (combined with `USE_API_STUBS=false`) writes each real API response to a timestamped file under `logs/<api>_log/` for later inspection. To promote a recorded response into a canned stub, copy the desired JSON file into the corresponding `src/stubs/*.ts` module.
 
 ### `scripts/`
 

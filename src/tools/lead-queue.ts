@@ -12,12 +12,14 @@ import {
 } from '../stubs/lead-queue.js';
 import { contextLog } from '../logger.js';
 
-// Response logging destination for get_lead_assignment_queue. Colocated with
-// the canned stubs so recorded live responses can be lifted straight into
-// LEAD_ASSIGNMENT_QUEUE_STUB later. Resolved against process.cwd() so it lands
-// in the source tree whether we're running via tsx (src/) or compiled JS.
+// Response logging destination for get_lead_assignment_queue. Lives under the
+// repo-root logs/ directory (gitignored) alongside the dev-table log stream.
+// Resolved against process.cwd() so it lands at the repo root whether we're
+// running via tsx or compiled JS. To lift a recorded live response into
+// LEAD_ASSIGNMENT_QUEUE_STUB later, copy the desired JSON file from here into
+// src/stubs/lead-queue.ts by hand.
 const LEAD_ASSIGNMENT_LOG_DIR = path.resolve(
-  'src/stubs/get_lead_queue_assignment_log'
+  'logs/get_lead_queue_assignment_log'
 );
 
 const shouldLogLeadAssignmentResponse = (): boolean =>
