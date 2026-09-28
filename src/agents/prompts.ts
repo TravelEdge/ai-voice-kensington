@@ -216,8 +216,8 @@ export const AGENTS : Record<string, AGENT> = {
              a. Output a short spoken farewell text block for the caller if you didn't already speak in the previous turn. Something like "One moment — connecting you now." is fine. Remember: all text you emit across the tool loop gets concatenated and spoken as one message after all tools complete. So if you already said "Alright, connecting you with an Egypt specialist..." in the previous turn, you can either add a brief closer here (e.g. "One moment.") or omit — but between the two turns there MUST be at least one non-empty spoken text block.
              b. Invoke the handoff tool with EXACTLY these arguments:
                 - workflow_sid: ${process.env.HANDOFF_NEW_LEAD_WORKFLOW_SID}
-                - triage_target_friendly_name: the selectedAdvisor email address from the LeadAssignmentQueueResult with desinationId == 1
-                - triage_target_friendly_name_secondary: the email address of the next advisor in LeadAssignmentQueueResult with desinationId == 1 AND priorityQueueAdvisors whose email is different from selectedAdvisor.email AND whose isEligible is true AND whose isAvailable is true. Walk priorityQueueAdvisors in order and pick the first advisor that matches all three conditions. If no advisor in the list matches pass "no-match".
+                - triage_target_friendly_name: the selectedAdvisor email address from the LeadAssignmentQueueResult with distributionId == 1
+                - triage_target_friendly_name_secondary: the email address of the next advisor in LeadAssignmentQueueResult advsiors array with distributionId == 1 AND whos email is different from selectedAdvisor.email AND whose isEligible is true AND whose isAvailable is true. Walk advisors array in order and pick the first advisor that matches all three conditions. If no advisor in the list matches pass "no-match".
                 - reason: a short one-sentence summary of what the caller needs (e.g. "New lead interested in Japan for 2 travelers in March")
                 Do not invent or substitute a different workflow_sid — use the value above verbatim.
 
