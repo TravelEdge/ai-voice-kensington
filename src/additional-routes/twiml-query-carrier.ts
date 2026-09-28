@@ -1,5 +1,6 @@
-import type { FastifyRequest } from 'fastify';
+import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { TACServer } from 'twilio-agent-connect';
+import Twilio from 'twilio';
 
 import {
   twimlQueryByCallSid,
@@ -60,6 +61,120 @@ const isTwimlPostRequest = (request: FastifyRequest): boolean => {
   const rawUrl = request.url ?? '';
   return rawUrl === '/twiml' || rawUrl.startsWith('/twiml?');
 };
+
+// -----------------------------------------------------------------------------
+// Twilio signature validation for our custom routes
+// -----------------------------------------------------------------------------
+//
+// TAC's SDK runs a signature-validation preHandler on its own routes
+// (/twiml, /webhook, /conversation-relay-callback) but NOT on any user-added
+// routes registered on `server.fastify`. That means /waitUrl,
+// /redirect-back-to-agent, /enqueue-or-end-call, and /enqueue-completed
+// would accept unauthenticated POSTs unless we add validation ourselves.
+//
+// We replicate TAC's validation logic verbatim here (see TACServer's
+// validateRequestSignature in node_modules/twilio-agent-connect/dist/index.js):
+//   1. Read X-Twilio-Signature header.
+//   2. Reconstruct the full public URL, honouring X-Forwarded-* headers so
+//      it works behind ngrok / a proxy.
+//   3. If bodySHA256 is in the URL, use validateRequestWithBody (raw body
+//      hash); otherwise use validateRequest (POST-form-param sort + HMAC).
+//   4. On failure, reply 403 — Fastify halts the request when reply.send
+//      is called in a preHandler, so the route handler never runs.
+//
+// /twiml is deliberately excluded — TAC's own preHandler covers it.
+
+const PROTECTED_CUSTOM_ROUTES: ReadonlySet<string> = new Set([
+  '/waitUrl',
+  '/redirect-back-to-agent',
+  '/enqueue-or-end-call',
+  '/enqueue-completed',
+]);
+
+const routeRequiresSignatureCheck = (request: FastifyRequest): boolean => {
+  if (request.method !== 'POST') return false;
+  const rawUrl = request.url ?? '';
+  // Strip query string when matching — Twilio may append ?foo=bar to waitUrl
+  // etc. (we do this ourselves in enqueue-with-takeback.ts).
+  const pathOnly = rawUrl.split('?')[0];
+  return PROTECTED_CUSTOM_ROUTES.has(pathOnly);
+};
+
+const getForwardedProto = (request: FastifyRequest): string => {
+  const raw = request.headers['x-forwarded-proto'];
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  return first?.split(',')[0]?.trim() || 'https';
+};
+
+const getForwardedHost = (request: FastifyRequest): string => {
+  const raw = request.headers['x-forwarded-host'] || request.headers.host;
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  return first?.split(',')[0]?.trim() || '';
+};
+
+const getWebhookUrl = (request: FastifyRequest): string => {
+  const proto = getForwardedProto(request);
+  const host = getForwardedHost(request);
+  return `${proto}://${host}${request.url}`;
+};
+
+async function validateTwilioSignature(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!authToken) {
+    // Fail closed — refusing to validate is safer than accepting unsigned
+    // requests. This should never happen in a properly-configured deploy.
+    request.log.error(
+      { route: request.url },
+      'TWILIO_AUTH_TOKEN not set — cannot validate Twilio signature; refusing request',
+    );
+    await reply.code(500).send({ error: 'Server misconfigured: missing TWILIO_AUTH_TOKEN' });
+    return;
+  }
+
+  const signatureHeader = request.headers['x-twilio-signature'];
+  const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+  const url = getWebhookUrl(request);
+
+  let isValid: boolean;
+  if (request.url?.includes('bodySHA256=')) {
+    // Raw-body signature variant — used when Twilio posts JSON.
+    const rawBody = (request as unknown as { rawBody?: string }).rawBody ?? '';
+    isValid = Twilio.validateRequestWithBody(authToken, signature ?? '', url, rawBody);
+  } else {
+    // Standard form-post variant — used by every one of our custom routes.
+    const params = (request.body as Record<string, string> | undefined) || {};
+    isValid = Twilio.validateRequest(authToken, signature ?? '', url, params);
+  }
+
+  if (!isValid) {
+    request.log.warn(
+      { url, hasSignature: Boolean(signature) },
+      'Invalid Twilio webhook signature on custom route — rejecting',
+    );
+    await reply.code(403).send({ error: 'Invalid webhook signature' });
+  }
+}
+
+/**
+ * Register the Fastify preHandler that validates the X-Twilio-Signature
+ * header on our custom routes (/waitUrl, /redirect-back-to-agent,
+ * /enqueue-or-end-call, /enqueue-completed). /twiml is deliberately skipped —
+ * TAC's own preHandler covers it. Must be called before server.start().
+ *
+ * The preHandler is registered globally (matches all requests) and internally
+ * checks the URL against PROTECTED_CUSTOM_ROUTES — this way we don't have to
+ * modify each route registration to add per-route preHandlers, which would
+ * be brittle if new routes are added later without wiring the hook.
+ */
+export function registerTwilioSignatureValidator(server: TACServer): void {
+  server.fastify.addHook('preHandler', async (request, reply) => {
+    if (!routeRequiresSignatureCheck(request)) return;
+    await validateTwilioSignature(request, reply);
+  });
+}
 
 /**
  * Register the Fastify preHandler that mirrors /twiml URL query params into a

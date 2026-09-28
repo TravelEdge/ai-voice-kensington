@@ -28,6 +28,7 @@ import {
   consumeTwimlQueryForCall,
   normalizeBoolParam,
   registerTwimlQueryCarrier,
+  registerTwilioSignatureValidator,
 } from './additional-routes/twiml-query-carrier.js';
 import {
   logger,
@@ -240,5 +241,13 @@ await enqueue_and_wait_routes(server, tac);
 // onInboundCallTwiml can consume them. Non-mutating — preserves the body
 // bytes Twilio signed, so TAC's route-level signature check still passes.
 registerTwimlQueryCarrier(server);
+
+// Validate X-Twilio-Signature on our custom routes (/waitUrl,
+// /redirect-back-to-agent, /enqueue-or-end-call, /enqueue-completed). TAC's
+// SDK already covers /twiml on its own routes; this closes the gap on the
+// user-added routes so nothing on this server accepts unsigned Twilio
+// callbacks. Registered globally as a preHandler that self-skips when the
+// URL isn't one of the protected paths.
+registerTwilioSignatureValidator(server);
 
 await server.start();
