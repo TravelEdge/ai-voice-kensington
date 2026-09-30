@@ -1,0 +1,45 @@
+flowchart TD
+    Start([Caller connects<br/>ConversationRelay WebSocket opens])
+    Setup[voiceChannel setup event<br/>captures CallSid, customParameters,<br/>welcomeGreeting]
+    FirstMsg[First caller utterance arrives<br/>onMessageReady → handleMessage]
+    HandleMsg{Takeback?<br/>customParameters.takeback === 'true'}
+    IntentDet[INTENT_DETECTION agent<br/>strict classifier — outputs ONE of<br/>NEW_LEAD / EXISTING_QUOTE_OR_TRIP /<br/>IN_DESTINATION / GENERAL_INQUIRY / UNKNOWN]
+    IntentSwitch{Which category?}
+
+    NewLead[NEW_LEAD agent<br/>collect trip details,<br/>lookup advisor, handoff]
+    Existing[EXISTING_QUOTE_OR_TRIP agent<br/>collect quote/trip ref,<br/>handoff to specialist]
+    InDest[IN_DESTINATION agent<br/>gather trip context,<br/>handoff to on-trip support]
+    General[GENERAL_INQUIRY agent<br/>collect basics,<br/>handoff to reception]
+    Stack[STACK_CALL agent<br/>callback recovery flow —<br/>see detailed diagram]
+    Unknown[UNKNOWN agent<br/>attempt disambiguation,<br/>end_call if stuck]
+
+    Start --> Setup
+    Setup --> FirstMsg
+    FirstMsg --> HandleMsg
+    HandleMsg -->|yes| Stack
+    HandleMsg -->|no| IntentDet
+    IntentDet --> IntentSwitch
+    IntentSwitch -->|NEW_LEAD| NewLead
+    IntentSwitch -->|EXISTING_QUOTE_OR_TRIP| Existing
+    IntentSwitch -->|IN_DESTINATION| InDest
+    IntentSwitch -->|GENERAL_INQUIRY| General
+    IntentSwitch -->|UNKNOWN| Unknown
+
+    NewLead -.->|caller wants<br/>something else| ChangeIntent[CHANGE_INTENT<br/>reset to INTENT_DETECTION]
+    Existing -.->|caller wants<br/>something else| ChangeIntent
+    InDest -.->|caller wants<br/>something else| ChangeIntent
+    General -.->|caller wants<br/>something else| ChangeIntent
+    Stack -.->|caller wants<br/>something else| ChangeIntent
+    ChangeIntent --> IntentDet
+
+    classDef start fill:#e1f5ff,stroke:#0369a1,stroke-width:2px,color:#000
+    classDef control fill:#fef3c7,stroke:#d97706,color:#000
+    classDef agent fill:#dbeafe,stroke:#2563eb,color:#000
+    classDef stack fill:#f3e8ff,stroke:#9333ea,color:#000
+    classDef change fill:#fee2e2,stroke:#dc2626,color:#000
+
+    class Start,Setup,FirstMsg start
+    class HandleMsg,IntentSwitch,IntentDet control
+    class NewLead,Existing,InDest,General,Unknown agent
+    class Stack stack
+    class ChangeIntent change

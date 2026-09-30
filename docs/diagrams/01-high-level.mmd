@@ -1,0 +1,27 @@
+flowchart LR
+    Caller([📞 Caller])
+    Studio[Studio Flow<br/>routes by DNIS /<br/>versioning]
+    TwiML[TwiML Bin<br/>substitutes<br/>isAgent, isRepeat,<br/>aiAgentDomain]
+    TAC[TAC Server<br/>ConversationRelay<br/>WebSocket]
+    Claude[Claude LLM<br/>Anthropic API]
+    Tools[(Tools:<br/>LeadDepo,<br/>TMT Legacy,<br/>Memory,<br/>Email)]
+    Flex[Flex TaskRouter<br/>human agent]
+
+    Caller -->|dials number| Studio
+    Studio -->|serves TwiML with query params| TwiML
+    TwiML -->|Redirect to /twiml| TAC
+    TAC <-->|LLM inference| Claude
+    Claude -->|tool_use| Tools
+    Tools -->|tool_result| Claude
+    Claude -->|handoff tool| Flex
+    Flex -.->|no reservation| TAC
+    TAC -->|reissue CR<br/>with takeback=true| Caller
+
+    classDef caller fill:#e1f5ff,stroke:#0369a1,stroke-width:2px,color:#000
+    classDef external fill:#fef3c7,stroke:#d97706,stroke-width:1px,color:#000
+    classDef internal fill:#dbeafe,stroke:#2563eb,stroke-width:1px,color:#000
+    classDef llm fill:#f3e8ff,stroke:#9333ea,stroke-width:1px,color:#000
+    class Caller caller
+    class Studio,TwiML,Flex external
+    class TAC internal
+    class Claude,Tools llm
