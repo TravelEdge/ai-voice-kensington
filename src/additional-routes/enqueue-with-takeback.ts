@@ -150,7 +150,7 @@ const enqueue_and_wait_routes = async (server: TACServer, tac: TAC) => {
             'CUSTOM_ROUTE',
         );
         const response = new Twilio.twiml.VoiceResponse();
-        response.play("https://amber-pig-5530.twil.io/assets/DefaultMusic60s.wav");
+        response.play(process.env.WAIT_URL_HOLD_MUSIC_URL as string);
         const redirectTarget = profileId
             ? `/redirect-back-to-agent?profileId=${encodeURIComponent(profileId)}`
             : '/redirect-back-to-agent';

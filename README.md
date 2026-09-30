@@ -166,7 +166,7 @@ Each tool is an Anthropic `Tool` definition plus an executor function. All tools
 
 **`enqueue-with-takeback.ts`** — the HTTP routes that make the takeback flow work.
 
-- **`POST /waitUrl`** — served while TaskRouter is waiting for a reservation. Plays hold music, redirects to `/redirect-back-to-agent` after a short window.
+- **`POST /waitUrl`** — served while TaskRouter is waiting for a reservation. Plays hold music from `WAIT_URL_HOLD_MUSIC_URL`, redirects to `/redirect-back-to-agent` after a short window.
 - **`POST /redirect-back-to-agent`** — the takeback path. Deletes any stale CO conversation grouped under the CallSid (Orchestrator requires exactly-1 rule), prefetches the caller's NewLead traits, and reissues a fresh `<ConversationRelay>` via `Calls.update` with `takeback=true` as a `<Parameter>`. That flag flips the next `handleMessage` into STACK_CALL directly instead of going through INTENT_DETECTION.
 - **`POST /enqueue-or-end-call`** — the `<Connect action>` URL. Receives `HandoffData` when the CR session ends. Three branches:
   - No `HandoffData` → caller hung up → `finalizeConversation` cleanup.
